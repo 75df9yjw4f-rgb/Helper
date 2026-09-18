@@ -83,6 +83,22 @@ def main():
     if monthly:
         horizons.append((f"месячная {monthly[0]}", [r for r in rows if r[0] == monthly[0]]))
 
+    exps_near = [e for e in exps if e <= exps[0] + datetime.timedelta(days=9)]
+    near = [r for r in rows if r[0] in exps_near]
+    if near and ratio:
+        net = collections.defaultdict(float)
+        for _, _cp, k, gex in near:
+            net[k] += gex
+        band = sorted(((k, v) for k, v in net.items()
+                       if 0.94 * spot <= k <= 1.06 * spot), key=lambda x: -x[0])
+        print("\nЛЕСТНИЦА ГАММЫ, ближние экспирации (только значимые страйки):")
+        for k, v in band:
+            if abs(v) < 0.010e9:
+                continue
+            side = "сопротивление" if k > spot else "поддержка"
+            print(f"  {k*ratio:9,.0f}   GLD ${k:.0f}   {v/1e9:+.3f}B   {side}")
+        print()
+
     for label, sel in horizons:
         if not sel:
             continue
