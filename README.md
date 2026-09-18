@@ -7,6 +7,7 @@
 |---|---|
 | [research/SOURCES-STATUS.md](research/SOURCES-STATUS.md) | Что изучено, что не найдено, правила цитирования источников |
 | [research/A-PLUS-TRADES-methodology.md](research/A-PLUS-TRADES-methodology.md) | Конспект методологии A+ TRADES (@APLUSFX100) со ссылками на ID постов |
+| [research/LEARNING-PLAN.md](research/LEARNING-PLAN.md) | План обучения стратегии: 8 фаз, дриллы, критерии перехода, карта терминов |
 | [research/raw/aplus-trades-telegram-archive.txt](research/raw/aplus-trades-telegram-archive.txt) | Сырой архив канала: 6368 постов, ноя 2024 — сен 2026 |
 
 ## Статус источников
