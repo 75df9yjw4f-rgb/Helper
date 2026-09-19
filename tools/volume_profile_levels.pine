@@ -2,37 +2,40 @@
 // Volume Profile Levels — POC / VAH / VAL за периоды, отрисованные уровнями
 // со значениями справа, в одном стиле с VWAP Levels.
 //
-// Сессия переключается: RTH по Нью-Йорку, Globex, вся сессия биржи или своя.
-// Композиты считаются по ЗАВЕРШЁННЫМ сессиям, поэтому в течение дня уровни
-// неподвижны и обновляются один раз при старте новой сессии.
+// Работает и на фьючерсах (сессия RTH / Globex), и на крипте (режим 24/7
+// с настраиваемым часом начала суток).
+// Композиты считаются по ЗАВЕРШЁННЫМ суткам, поэтому в течение дня уровни
+// неподвижны и обновляются один раз при старте новых суток.
 indicator("Volume Profile Levels", overlay = true, max_lines_count = 500, max_labels_count = 500, max_bars_back = 5000)
 
 // ─────────────────────────────── Сессия
 gT = "Сессия"
-sessMode = input.string("RTH 09:30-16:00", "Какую сессию считать", options = ["RTH 09:30-16:00", "Globex 18:00-17:00", "Вся сессия биржи", "Своя"], group = gT)
+sessMode = input.string("RTH 09:30-16:00", "Режим", options = ["RTH 09:30-16:00", "Globex 18:00-17:00", "24/7 крипта", "Вся сессия биржи", "Своя"], group = gT)
 sessCustom = input.session("0930-1600", "Своя сессия", group = gT)
 tzStr = input.string("America/New_York", "Часовой пояс", group = gT)
+dayAnchorH = input.int(0, "Час начала суток для 24/7", minval = 0, maxval = 23, group = gT)
 
 // ─────────────────────────────── Расчёт
 gR = "Расчёт"
 vaPct = input.float(70.0, "Value Area, % объёма", minval = 30, maxval = 95, step = 1, group = gR)
 rows = input.int(100, "Строк в профиле", minval = 20, maxval = 500, group = gR)
 maxScan = input.int(5000, "Макс. баров для анализа", minval = 500, maxval = 5000, group = gR)
-inclToday = input.bool(false, "Включать текущую сессию в композиты", group = gR)
+inclToday = input.bool(false, "Включать текущие сутки в композиты", group = gR)
 liveCalc = input.bool(false, "Пересчитывать каждый бар (медленно)", group = gR)
 volMode = input.string("Авто", "Источник объёма", options = ["Авто", "Только реальный объём", "Кол-во баров (TPO)"], group = gR)
+volSym = input.symbol("", "Брать объём с другого символа", group = gR)
 
 // ─────────────────────────────── Какие профили
 gP = "Дневные композиты"
-useN1 = input.bool(true, "Прошлая сессия  pd", group = gP)
+useN1 = input.bool(true, "Прошлые сутки  pd", group = gP)
 useN2 = input.bool(true, "Композит A", group = gP)
-nA = input.int(2, "  сессий в A", minval = 1, maxval = 60, group = gP)
+nA = input.int(2, "  суток в A", minval = 1, maxval = 60, group = gP)
 useN3 = input.bool(true, "Композит B", group = gP)
-nB = input.int(3, "  сессий в B", minval = 1, maxval = 60, group = gP)
+nB = input.int(3, "  суток в B", minval = 1, maxval = 60, group = gP)
 useN4 = input.bool(true, "Композит C", group = gP)
-nC = input.int(7, "  сессий в C", minval = 1, maxval = 60, group = gP)
+nC = input.int(7, "  суток в C", minval = 1, maxval = 60, group = gP)
 useN5 = input.bool(false, "Композит D", group = gP)
-nD = input.int(30, "  сессий в D", minval = 1, maxval = 60, group = gP)
+nD = input.int(30, "  суток в D", minval = 1, maxval = 60, group = gP)
 
 gW = "Календарные периоды"
 usePW = input.bool(true, "Прошлая неделя  pw", group = gW)
@@ -57,11 +60,26 @@ cPOC = input.color(#f5f5f5, "POC", group = gC)
 cVAH = input.color(#ef5350, "VAH", group = gC)
 cVAL = input.color(#26a69a, "VAL", group = gC)
 
-// ─────────────────────────────── Определение сессии
+// ─────────────────────────────── Объём
+useExtVol = volSym != ""
+volSymUse = useExtVol ? volSym : syminfo.tickerid
+extVol = request.security(volSymUse, timeframe.period, volume)
+srcVol = useExtVol ? extVol : volume
+
+// ─────────────────────────────── Определение суток
+crypto24 = sessMode == "24/7 крипта"
 sessUse = sessMode == "RTH 09:30-16:00" ? "0930-1600" : sessMode == "Globex 18:00-17:00" ? "1800-1700" : sessCustom
-useFilter = sessMode != "Вся сессия биржи"
+useFilter = not crypto24 and sessMode != "Вся сессия биржи"
 inSess = useFilter ? not na(time(timeframe.period, sessUse, tzStr)) : true
-newDay = useFilter ? (inSess and not inSess[1]) : timeframe.change("D")
+
+shiftT = time - dayAnchorH * 3600000
+yr = year(shiftT, tzStr)
+mo = month(shiftT, tzStr)
+dm = dayofmonth(shiftT, tzStr)
+wk = weekofyear(shiftT, tzStr)
+dayKey = yr * 10000 + mo * 100 + dm
+
+newDay = crypto24 ? (dayKey != dayKey[1]) : useFilter ? (inSess and not inSess[1]) : timeframe.change("D")
 
 // ─────────────────────────────── Границы периодов
 var array<int> dStart = array.new<int>()
@@ -75,8 +93,6 @@ if newDay
     if array.size(dStart) > 70
         array.shift(dStart)
 
-    int wk = weekofyear(time, tzStr)
-    int yr = year(time, tzStr)
     int wKey = yr * 100 + wk
     if na(lastWeekKey) or wKey != lastWeekKey
         lastWeekKey := wKey
@@ -84,7 +100,6 @@ if newDay
         if array.size(wStart) > 12
             array.shift(wStart)
 
-    int mo = month(time, tzStr)
     int mKey = yr * 100 + mo
     if na(lastMonthKey) or mKey != lastMonthKey
         lastMonthKey := mKey
@@ -135,7 +150,7 @@ f_profile(int fromT, int toT) =>
                 break
             if not inSess[i]
                 continue
-            float rv = nz(volume[i])
+            float rv = nz(srcVol[i])
             float bv = volMode == "Кол-во баров (TPO)" ? 1.0 : rv > 0 ? rv : volMode == "Авто" ? 1.0 : 0.0
             if bv > 0
                 int b1 = math.max(0, math.min(bins - 1, int((low[i] - lo) / step)))
