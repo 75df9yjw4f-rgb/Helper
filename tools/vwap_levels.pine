@@ -1,0 +1,164 @@
+//@version=6
+// VWAP Levels — обычный VWAP, но отрисованный уровнями со значениями,
+// а не непрерывной линией через весь график.
+// Периоды: день, неделя, месяц, квартал, год + значения прошлых периодов.
+indicator("VWAP Levels", overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+// ─────────────────────────────── Источник
+gSrc = "Источник"
+src = input.source(hlc3, "Цена для расчёта", group = gSrc)
+
+// ─────────────────────────────── Текущие периоды
+gP = "Текущие периоды"
+useD = input.bool(true,  "Дневной  dVWAP",     group = gP)
+useW = input.bool(true,  "Недельный  wVWAP",   group = gP)
+useM = input.bool(true,  "Месячный  mVWAP",    group = gP)
+useQ = input.bool(false, "Квартальный  qVWAP", group = gP)
+useY = input.bool(false, "Годовой  yVWAP",     group = gP)
+
+// ─────────────────────────────── Прошлые периоды
+gPP = "Прошлые периоды"
+usePD = input.bool(true,  "Прошлый день  pdVWAP",    group = gPP)
+usePW = input.bool(true,  "Прошлая неделя  pwVWAP",  group = gPP)
+usePM = input.bool(false, "Прошлый месяц  pmVWAP",   group = gPP)
+usePQ = input.bool(false, "Прошлый квартал  pqVWAP", group = gPP)
+
+// ─────────────────────────────── Отклонения
+gB = "Стандартные отклонения"
+bandsOn  = input.bool(true, "Показывать отклонения", group = gB)
+bandsFor = input.string("Недельный", "Для какого VWAP", options = ["Дневной", "Недельный", "Месячный", "Квартальный", "Годовой"], group = gB)
+mult1 = input.float(1.0, "Множитель 1  (0 = выкл)", step = 0.5, minval = 0, group = gB)
+mult2 = input.float(2.0, "Множитель 2  (0 = выкл)", step = 0.5, minval = 0, group = gB)
+mult3 = input.float(3.0, "Множитель 3  (0 = выкл)", step = 0.5, minval = 0, group = gB)
+
+// ─────────────────────────────── Стиль
+gS = "Стиль"
+offBars  = input.int(3,  "Отступ от последней свечи, баров", minval = 0, maxval = 200, group = gS)
+lenBars  = input.int(14, "Длина отрезка, баров",             minval = 1, maxval = 200, group = gS)
+lw       = input.int(1,  "Толщина линии", minval = 1, maxval = 4, group = gS)
+showName = input.bool(true, "Показывать название", group = gS)
+showVal  = input.bool(true, "Показывать значение", group = gS)
+sizeStr  = input.string("Мелкий", "Размер текста", options = ["Мелкий", "Средний", "Крупный"], group = gS)
+
+// ─────────────────────────────── Цвета
+gC = "Цвета"
+cD = input.color(#26a69a, "Дневной",         group = gC)
+cW = input.color(#42a5f5, "Недельный",       group = gC)
+cM = input.color(#ab47bc, "Месячный",        group = gC)
+cQ = input.color(#ef5350, "Квартальный",     group = gC)
+cY = input.color(#ffa726, "Годовой",         group = gC)
+cP = input.color(#787b86, "Прошлые периоды", group = gC)
+cB = input.color(#5d606b, "Отклонения",      group = gC)
+
+// ─────────────────────────────── Расчёт VWAP и σ
+// Накопление ведётся вручную, чтобы получить и VWAP, и стандартное отклонение
+// по одному и тому же периоду.
+f_vwap(_src, _isNew) =>
+    var float sumPV  = 0.0
+    var float sumV   = 0.0
+    var float sumP2V = 0.0
+    if _isNew
+        sumPV  := 0.0
+        sumV   := 0.0
+        sumP2V := 0.0
+    float v = nz(volume)
+    sumPV  += _src * v
+    sumV   += v
+    sumP2V += _src * _src * v
+    float vw = sumV > 0 ? sumPV / sumV : na
+    float sd = na
+    if sumV > 0 and not na(vw)
+        sd := math.sqrt(math.max(sumP2V / sumV - vw * vw, 0.0))
+    [vw, sd]
+
+newD = timeframe.change("D")
+newW = timeframe.change("W")
+newM = timeframe.change("M")
+newQ = timeframe.change("3M")
+newY = timeframe.change("12M")
+
+[vD, sdD] = f_vwap(src, newD)
+[vW, sdW] = f_vwap(src, newW)
+[vM, sdM] = f_vwap(src, newM)
+[vQ, sdQ] = f_vwap(src, newQ)
+[vY, sdY] = f_vwap(src, newY)
+
+// Значения прошлых периодов защёлкиваются в момент смены периода
+var float pvD = na
+var float pvW = na
+var float pvM = na
+var float pvQ = na
+if newD
+    pvD := nz(vD[1], pvD)
+if newW
+    pvW := nz(vW[1], pvW)
+if newM
+    pvM := nz(vM[1], pvM)
+if newQ
+    pvQ := nz(vQ[1], pvQ)
+
+// Какой VWAP берём для отклонений
+float bV = switch bandsFor
+    "Дневной"     => vD
+    "Недельный"   => vW
+    "Месячный"    => vM
+    "Квартальный" => vQ
+    => vY
+float bS = switch bandsFor
+    "Дневной"     => sdD
+    "Недельный"   => sdW
+    "Месячный"    => sdM
+    "Квартальный" => sdQ
+    => sdY
+
+// ─────────────────────────────── Отрисовка
+txtSize = sizeStr == "Мелкий" ? size.tiny : sizeStr == "Средний" ? size.small : size.normal
+
+var array<line>  arrL = array.new<line>()
+var array<label> arrB = array.new<label>()
+
+drawLvl(float price, string name, color col) =>
+    if not na(price)
+        int x1 = bar_index + offBars
+        int x2 = x1 + lenBars
+        array.push(arrL, line.new(x1, price, x2, price, xloc = xloc.bar_index, color = col, width = lw))
+        string t = (showName ? name : "") + (showName and showVal ? "  " : "") + (showVal ? str.tostring(price, format.mintick) : "")
+        if str.length(t) > 0
+            array.push(arrB, label.new(x2, price, t, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_left, color = color.new(color.black, 100), textcolor = col, size = txtSize))
+
+if barstate.islast
+    while array.size(arrL) > 0
+        line.delete(array.pop(arrL))
+    while array.size(arrB) > 0
+        label.delete(array.pop(arrB))
+
+    if useD
+        drawLvl(vD, "dVWAP", cD)
+    if useW
+        drawLvl(vW, "wVWAP", cW)
+    if useM
+        drawLvl(vM, "mVWAP", cM)
+    if useQ
+        drawLvl(vQ, "qVWAP", cQ)
+    if useY
+        drawLvl(vY, "yVWAP", cY)
+
+    if usePD
+        drawLvl(pvD, "pdVWAP", cP)
+    if usePW
+        drawLvl(pvW, "pwVWAP", cP)
+    if usePM
+        drawLvl(pvM, "pmVWAP", cP)
+    if usePQ
+        drawLvl(pvQ, "pqVWAP", cP)
+
+    if bandsOn and not na(bV) and not na(bS)
+        if mult1 > 0
+            drawLvl(bV + bS * mult1, "+" + str.tostring(mult1) + "σ", cB)
+            drawLvl(bV - bS * mult1, "-" + str.tostring(mult1) + "σ", cB)
+        if mult2 > 0
+            drawLvl(bV + bS * mult2, "+" + str.tostring(mult2) + "σ", cB)
+            drawLvl(bV - bS * mult2, "-" + str.tostring(mult2) + "σ", cB)
+        if mult3 > 0
+            drawLvl(bV + bS * mult3, "+" + str.tostring(mult3) + "σ", cB)
+            drawLvl(bV - bS * mult3, "-" + str.tostring(mult3) + "σ", cB)
