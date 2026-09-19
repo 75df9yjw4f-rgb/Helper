@@ -13,6 +13,7 @@
 | [research/ORDERFLOW-RULES.md](research/ORDERFLOW-RULES.md) | Семь правил чтения потока: баланс, Initial Balance, ложное поглощение, механика отказа гамма-уровней |
 | [research/GEX-CRITIQUE.md](research/GEX-CRITIQUE.md) | Почему GEX сам по себе не работает: разбор заявления о пятилетнем тесте, что такое charm |
 | [research/GEX-GOLD.md](research/GEX-GOLD.md) | Gamma exposure по золоту: бесплатный источник, определение стен, пересчёт GLD в XAUUSD |
+| [tools/volume_profile_levels.pine](tools/volume_profile_levels.pine) | Индикатор TradingView: POC, VAH, VAL за дневные композиты и календарные периоды |
 | [tools/vwap_levels.pine](tools/vwap_levels.pine) | Индикатор TradingView: VWAP уровнями со значениями вместо непрерывной линии |
 | [tools/gld_gex_walls.py](tools/gld_gex_walls.py) | Скрипт: считает Call Wall и Put Wall по GLD и переводит в золото |
 | [research/raw/aplus-trades-telegram-archive.txt](research/raw/aplus-trades-telegram-archive.txt) | Сырой архив канала: 6368 постов, ноя 2024 — сен 2026 |
