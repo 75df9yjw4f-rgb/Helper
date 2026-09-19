@@ -9,6 +9,7 @@
 | [research/A-PLUS-TRADES-methodology.md](research/A-PLUS-TRADES-methodology.md) | Конспект методологии A+ TRADES (@APLUSFX100) со ссылками на ID постов |
 | [research/LEARNING-PLAN.md](research/LEARNING-PLAN.md) | План обучения стратегии: 8 фаз, дриллы, критерии перехода, карта терминов |
 | [research/CHART-SETUP.md](research/CHART-SETUP.md) | Настройка графика в TradingView: точные параметры SVP и VWAP, два лэйаута, ловушки |
+| [research/DAILY-BIAS.md](research/DAILY-BIAS.md) | Дневной уклон по объёмному профилю: метод Jase, механика, сопоставление с A+, перенос на золото |
 | [research/GEX-GOLD.md](research/GEX-GOLD.md) | Gamma exposure по золоту: бесплатный источник, определение стен, пересчёт GLD в XAUUSD |
 | [tools/gld_gex_walls.py](tools/gld_gex_walls.py) | Скрипт: считает Call Wall и Put Wall по GLD и переводит в золото |
 | [research/raw/aplus-trades-telegram-archive.txt](research/raw/aplus-trades-telegram-archive.txt) | Сырой архив канала: 6368 постов, ноя 2024 — сен 2026 |
