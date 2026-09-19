@@ -2,33 +2,40 @@
 // Volume Profile Levels — POC / VAH / VAL за периоды, отрисованные уровнями
 // со значениями справа, в одном стиле с VWAP Levels.
 //
-// Композиты считаются по ЗАВЕРШЁННЫМ торговым дням, поэтому в течение сессии
-// уровни неподвижны и обновляются один раз при старте нового дня.
+// Сессия переключается: RTH по Нью-Йорку, Globex, вся сессия биржи или своя.
+// Композиты считаются по ЗАВЕРШЁННЫМ сессиям, поэтому в течение дня уровни
+// неподвижны и обновляются один раз при старте новой сессии.
 indicator("Volume Profile Levels", overlay = true, max_lines_count = 500, max_labels_count = 500, max_bars_back = 5000)
+
+// ─────────────────────────────── Сессия
+gT = "Сессия"
+sessMode = input.string("RTH 09:30-16:00", "Какую сессию считать", options = ["RTH 09:30-16:00", "Globex 18:00-17:00", "Вся сессия биржи", "Своя"], group = gT)
+sessCustom = input.session("0930-1600", "Своя сессия", group = gT)
+tzStr = input.string("America/New_York", "Часовой пояс", group = gT)
 
 // ─────────────────────────────── Расчёт
 gR = "Расчёт"
-vaPct   = input.float(70.0, "Value Area, % объёма", minval = 30, maxval = 95, step = 1, group = gR)
-rows    = input.int(100, "Строк в профиле", minval = 20, maxval = 500, group = gR)
+vaPct = input.float(70.0, "Value Area, % объёма", minval = 30, maxval = 95, step = 1, group = gR)
+rows = input.int(100, "Строк в профиле", minval = 20, maxval = 500, group = gR)
 maxScan = input.int(5000, "Макс. баров для анализа", minval = 500, maxval = 5000, group = gR)
-inclToday = input.bool(false, "Включать текущий день в композиты", group = gR)
-liveCalc  = input.bool(false, "Пересчитывать каждый бар (медленно)", group = gR)
+inclToday = input.bool(false, "Включать текущую сессию в композиты", group = gR)
+liveCalc = input.bool(false, "Пересчитывать каждый бар (медленно)", group = gR)
 
 // ─────────────────────────────── Какие профили
 gP = "Дневные композиты"
-useN1 = input.bool(true,  "Прошлый день  pd",  group = gP)
-useN2 = input.bool(true,  "Композит A",        group = gP)
-nA    = input.int(2,  "  дней в A",  minval = 1, maxval = 60, group = gP)
-useN3 = input.bool(true,  "Композит B",        group = gP)
-nB    = input.int(3,  "  дней в B",  minval = 1, maxval = 60, group = gP)
-useN4 = input.bool(true,  "Композит C",        group = gP)
-nC    = input.int(7,  "  дней в C",  minval = 1, maxval = 60, group = gP)
-useN5 = input.bool(false, "Композит D",        group = gP)
-nD    = input.int(30, "  дней в D",  minval = 1, maxval = 60, group = gP)
+useN1 = input.bool(true, "Прошлая сессия  pd", group = gP)
+useN2 = input.bool(true, "Композит A", group = gP)
+nA = input.int(2, "  сессий в A", minval = 1, maxval = 60, group = gP)
+useN3 = input.bool(true, "Композит B", group = gP)
+nB = input.int(3, "  сессий в B", minval = 1, maxval = 60, group = gP)
+useN4 = input.bool(true, "Композит C", group = gP)
+nC = input.int(7, "  сессий в C", minval = 1, maxval = 60, group = gP)
+useN5 = input.bool(false, "Композит D", group = gP)
+nD = input.int(30, "  сессий в D", minval = 1, maxval = 60, group = gP)
 
 gW = "Календарные периоды"
-usePW = input.bool(true,  "Прошлая неделя  pw", group = gW)
-usePM = input.bool(false, "Прошлый месяц  pm",  group = gW)
+usePW = input.bool(true, "Прошлая неделя  pw", group = gW)
+usePM = input.bool(false, "Прошлый месяц  pm", group = gW)
 
 gL = "Какие линии"
 showPOC = input.bool(true, "POC", group = gL)
@@ -37,44 +44,59 @@ showVAL = input.bool(true, "VAL", group = gL)
 
 // ─────────────────────────────── Стиль
 gS = "Стиль"
-offBars  = input.int(3,  "Отступ от последней свечи, баров", minval = 0, maxval = 200, group = gS)
-lenBars  = input.int(14, "Длина отрезка, баров",             minval = 1, maxval = 200, group = gS)
-lw       = input.int(1,  "Толщина линии", minval = 1, maxval = 4, group = gS)
+offBars = input.int(3, "Отступ от последней свечи, баров", minval = 0, maxval = 200, group = gS)
+lenBars = input.int(14, "Длина отрезка, баров", minval = 1, maxval = 200, group = gS)
+lw = input.int(1, "Толщина линии", minval = 1, maxval = 4, group = gS)
 showName = input.bool(true, "Показывать название", group = gS)
-showVal  = input.bool(true, "Показывать значение", group = gS)
-sizeStr  = input.string("Мелкий", "Размер текста", options = ["Мелкий", "Средний", "Крупный"], group = gS)
+showVal = input.bool(true, "Показывать значение", group = gS)
+sizeStr = input.string("Мелкий", "Размер текста", options = ["Мелкий", "Средний", "Крупный"], group = gS)
 
 gC = "Цвета"
 cPOC = input.color(#f5f5f5, "POC", group = gC)
 cVAH = input.color(#ef5350, "VAH", group = gC)
 cVAL = input.color(#26a69a, "VAL", group = gC)
 
+// ─────────────────────────────── Определение сессии
+sessUse = sessMode == "RTH 09:30-16:00" ? "0930-1600" : sessMode == "Globex 18:00-17:00" ? "1800-1700" : sessCustom
+useFilter = sessMode != "Вся сессия биржи"
+inSess = useFilter ? not na(time(timeframe.period, sessUse, tzStr)) : true
+newDay = useFilter ? (inSess and not inSess[1]) : timeframe.change("D")
+
 // ─────────────────────────────── Границы периодов
 var array<int> dStart = array.new<int>()
 var array<int> wStart = array.new<int>()
 var array<int> mStart = array.new<int>()
+var int lastWeekKey = na
+var int lastMonthKey = na
 
-if timeframe.change("D")
+if newDay
     array.push(dStart, time)
     if array.size(dStart) > 70
         array.shift(dStart)
-if timeframe.change("W")
-    array.push(wStart, time)
-    if array.size(wStart) > 12
-        array.shift(wStart)
-if timeframe.change("M")
-    array.push(mStart, time)
-    if array.size(mStart) > 8
-        array.shift(mStart)
+
+    int wk = weekofyear(time, tzStr)
+    int yr = year(time, tzStr)
+    int wKey = yr * 100 + wk
+    if na(lastWeekKey) or wKey != lastWeekKey
+        lastWeekKey := wKey
+        array.push(wStart, time)
+        if array.size(wStart) > 12
+            array.shift(wStart)
+
+    int mo = month(time, tzStr)
+    int mKey = yr * 100 + mo
+    if na(lastMonthKey) or mKey != lastMonthKey
+        lastMonthKey := mKey
+        array.push(mStart, time)
+        if array.size(mStart) > 8
+            array.shift(mStart)
 
 // ─────────────────────────────── Ядро: профиль за окно времени
-// Возвращает [poc, vah, val]. Окно задаётся метками времени включительно.
 f_profile(int fromT, int toT) =>
     float hi = na
     float lo = na
-    int   n  = 0
+    int n = 0
 
-    // проход 1: границы диапазона
     for i = 0 to maxScan
         if i > bar_index
             break
@@ -85,20 +107,21 @@ f_profile(int fromT, int toT) =>
             continue
         if t < fromT
             break
+        if not inSess[i]
+            continue
         hi := na(hi) ? high[i] : math.max(hi, high[i])
-        lo := na(lo) ? low[i]  : math.min(lo, low[i])
-        n  += 1
+        lo := na(lo) ? low[i] : math.min(lo, low[i])
+        n := n + 1
 
     float poc = na
     float vah = na
     float val = na
 
     if n > 0 and not na(hi) and not na(lo) and hi > lo
-        int   bins = rows
+        int bins = rows
         float step = (hi - lo) / bins
         array<float> hist = array.new<float>(bins, 0.0)
 
-        // проход 2: разнос объёма по корзинам
         for i = 0 to maxScan
             if i > bar_index
                 break
@@ -109,38 +132,38 @@ f_profile(int fromT, int toT) =>
                 continue
             if t < fromT
                 break
+            if not inSess[i]
+                continue
             float bv = nz(volume[i])
             if bv > 0
-                int b1 = math.max(0, math.min(bins - 1, int((low[i]  - lo) / step)))
+                int b1 = math.max(0, math.min(bins - 1, int((low[i] - lo) / step)))
                 int b2 = math.max(0, math.min(bins - 1, int((high[i] - lo) / step)))
                 float per = bv / (b2 - b1 + 1)
                 for b = b1 to b2
                     array.set(hist, b, array.get(hist, b) + per)
 
-        // POC
-        int   pocIdx = 0
-        float mx     = -1.0
+        int pocIdx = 0
+        float mx = -1.0
         for b = 0 to bins - 1
             float v = array.get(hist, b)
             if v > mx
-                mx     := v
+                mx := v
                 pocIdx := b
 
-        // Value Area: расширяем от POC в сторону большего объёма
-        float total  = array.sum(hist)
+        float total = array.sum(hist)
         float target = total * vaPct / 100.0
-        float acc    = array.get(hist, pocIdx)
-        int   up     = pocIdx
-        int   dn     = pocIdx
+        float acc = array.get(hist, pocIdx)
+        int up = pocIdx
+        int dn = pocIdx
         while acc < target and (up < bins - 1 or dn > 0)
             float vUp = up < bins - 1 ? array.get(hist, up + 1) : -1.0
-            float vDn = dn > 0        ? array.get(hist, dn - 1) : -1.0
+            float vDn = dn > 0 ? array.get(hist, dn - 1) : -1.0
             if vUp >= vDn
-                up  += 1
-                acc += vUp
+                up := up + 1
+                acc := acc + vUp
             else
-                dn  -= 1
-                acc += vDn
+                dn := dn - 1
+                acc := acc + vDn
 
         poc := lo + (pocIdx + 0.5) * step
         vah := lo + (up + 1) * step
@@ -148,103 +171,131 @@ f_profile(int fromT, int toT) =>
 
     [poc, vah, val]
 
-// Окно для композита из N завершённых дней
 f_dayWindow(int nDays) =>
     int sz = array.size(dStart)
     int fromT = na
-    int toT   = na
+    int toT = na
     if inclToday
         if sz >= nDays
             fromT := array.get(dStart, sz - nDays)
-            toT   := time
+            toT := time
     else
         if sz >= nDays + 1
             fromT := array.get(dStart, sz - 1 - nDays)
-            toT   := array.get(dStart, sz - 1) - 1
+            toT := array.get(dStart, sz - 1) - 1
     [fromT, toT]
 
 f_prevWindow(array<int> arr) =>
     int sz = array.size(arr)
     int fromT = na
-    int toT   = na
+    int toT = na
     if sz >= 2
         fromT := array.get(arr, sz - 2)
-        toT   := array.get(arr, sz - 1) - 1
+        toT := array.get(arr, sz - 1) - 1
     [fromT, toT]
 
 // ─────────────────────────────── Кэш результатов
-var float p1P = na, p1H = na, p1L = na
-var float pAP = na, pAH = na, pAL = na
-var float pBP = na, pBH = na, pBL = na
-var float pCP = na, pCH = na, pCL = na
-var float pDP = na, pDH = na, pDL = na
-var float pWP = na, pWH = na, pWL = na
-var float pMP = na, pMH = na, pML = na
-var int   lastCalc = na
+var float p1P = na
+var float p1H = na
+var float p1L = na
+var float pAP = na
+var float pAH = na
+var float pAL = na
+var float pBP = na
+var float pBH = na
+var float pBL = na
+var float pCP = na
+var float pCH = na
+var float pCL = na
+var float pDP = na
+var float pDH = na
+var float pDL = na
+var float pWP = na
+var float pWH = na
+var float pWL = na
+var float pMP = na
+var float pMH = na
+var float pML = na
+var int lastCalc = na
 
 calcNow = barstate.islast and (liveCalc or na(lastCalc) or lastCalc != array.size(dStart))
 
 if calcNow
     lastCalc := array.size(dStart)
+
     if useN1
-        [f, t] = f_dayWindow(1)
-        if not na(f)
-            [a, b, c] = f_profile(f, t)
-            p1P := a, p1H := b, p1L := c
+        [f1, t1] = f_dayWindow(1)
+        if not na(f1)
+            [a1, b1, c1] = f_profile(f1, t1)
+            p1P := a1
+            p1H := b1
+            p1L := c1
     if useN2
-        [f, t] = f_dayWindow(nA)
-        if not na(f)
-            [a, b, c] = f_profile(f, t)
-            pAP := a, pAH := b, pAL := c
+        [f2, t2] = f_dayWindow(nA)
+        if not na(f2)
+            [a2, b2, c2] = f_profile(f2, t2)
+            pAP := a2
+            pAH := b2
+            pAL := c2
     if useN3
-        [f, t] = f_dayWindow(nB)
-        if not na(f)
-            [a, b, c] = f_profile(f, t)
-            pBP := a, pBH := b, pBL := c
+        [f3, t3] = f_dayWindow(nB)
+        if not na(f3)
+            [a3, b3, c3] = f_profile(f3, t3)
+            pBP := a3
+            pBH := b3
+            pBL := c3
     if useN4
-        [f, t] = f_dayWindow(nC)
-        if not na(f)
-            [a, b, c] = f_profile(f, t)
-            pCP := a, pCH := b, pCL := c
+        [f4, t4] = f_dayWindow(nC)
+        if not na(f4)
+            [a4, b4, c4] = f_profile(f4, t4)
+            pCP := a4
+            pCH := b4
+            pCL := c4
     if useN5
-        [f, t] = f_dayWindow(nD)
-        if not na(f)
-            [a, b, c] = f_profile(f, t)
-            pDP := a, pDH := b, pDL := c
+        [f5, t5] = f_dayWindow(nD)
+        if not na(f5)
+            [a5, b5, c5] = f_profile(f5, t5)
+            pDP := a5
+            pDH := b5
+            pDL := c5
     if usePW
-        [f, t] = f_prevWindow(wStart)
-        if not na(f)
-            [a, b, c] = f_profile(f, t)
-            pWP := a, pWH := b, pWL := c
+        [f6, t6] = f_prevWindow(wStart)
+        if not na(f6)
+            [a6, b6, c6] = f_profile(f6, t6)
+            pWP := a6
+            pWH := b6
+            pWL := c6
     if usePM
-        [f, t] = f_prevWindow(mStart)
-        if not na(f)
-            [a, b, c] = f_profile(f, t)
-            pMP := a, pMH := b, pML := c
+        [f7, t7] = f_prevWindow(mStart)
+        if not na(f7)
+            [a7, b7, c7] = f_profile(f7, t7)
+            pMP := a7
+            pMH := b7
+            pML := c7
 
 // ─────────────────────────────── Отрисовка
 txtSize = sizeStr == "Мелкий" ? size.tiny : sizeStr == "Средний" ? size.small : size.normal
 
-var array<line>  arrL = array.new<line>()
+var array<line> arrL = array.new<line>()
 var array<label> arrB = array.new<label>()
 
-drawLvl(float price, string name, color col) =>
+drawLvl(float price, string nm, color col) =>
     if not na(price)
         int x1 = bar_index + offBars
         int x2 = x1 + lenBars
         array.push(arrL, line.new(x1, price, x2, price, xloc = xloc.bar_index, color = col, width = lw))
-        string t = (showName ? name : "") + (showName and showVal ? "  " : "") + (showVal ? str.tostring(price, format.mintick) : "")
-        if str.length(t) > 0
-            array.push(arrB, label.new(x2, price, t, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_left, color = color.new(color.black, 100), textcolor = col, size = txtSize))
+        string txt = (showName ? nm : "") + (showName and showVal ? "  " : "") + (showVal ? str.tostring(price, format.mintick) : "")
+        if str.length(txt) > 0
+            array.push(arrB, label.new(x2, price, txt, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_left, color = color.new(color.black, 100), textcolor = col, size = txtSize))
 
-drawSet(bool on, float p, float h, float l, string pref) =>
+drawSet(bool on, float pv, float hv, float lv, string pref) =>
     if on
         if showVAH
-            drawLvl(h, pref + "VAH", cVAH)
+            drawLvl(hv, pref + "VAH", cVAH)
         if showPOC
-            drawLvl(p, pref + "POC", cPOC)
+            drawLvl(pv, pref + "POC", cPOC)
         if showVAL
-            drawLvl(l, pref + "VAL", cVAL)
+            drawLvl(lv, pref + "VAL", cVAL)
 
 if barstate.islast
     while array.size(arrL) > 0
