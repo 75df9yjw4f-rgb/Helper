@@ -10,7 +10,7 @@
 | [research/LEARNING-PLAN.md](research/LEARNING-PLAN.md) | План обучения стратегии: 8 фаз, дриллы, критерии перехода, карта терминов |
 | [research/CHART-SETUP.md](research/CHART-SETUP.md) | Настройка графика в TradingView: точные параметры SVP и VWAP, два лэйаута, ловушки |
 | [research/DAILY-BIAS.md](research/DAILY-BIAS.md) | Дневной уклон по объёмному профилю: метод Jase, механика, сопоставление с A+, перенос на золото |
-| [research/ORDERFLOW-RULES.md](research/ORDERFLOW-RULES.md) | Пять правил чтения потока: баланс, Initial Balance, ложное поглощение, механика отказа гамма-уровней |
+| [research/ORDERFLOW-RULES.md](research/ORDERFLOW-RULES.md) | Семь правил чтения потока: баланс, Initial Balance, ложное поглощение, механика отказа гамма-уровней |
 | [research/GEX-CRITIQUE.md](research/GEX-CRITIQUE.md) | Почему GEX сам по себе не работает: разбор заявления о пятилетнем тесте, что такое charm |
 | [research/GEX-GOLD.md](research/GEX-GOLD.md) | Gamma exposure по золоту: бесплатный источник, определение стен, пересчёт GLD в XAUUSD |
 | [tools/gld_gex_walls.py](tools/gld_gex_walls.py) | Скрипт: считает Call Wall и Put Wall по GLD и переводит в золото |
