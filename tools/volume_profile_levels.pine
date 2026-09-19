@@ -20,6 +20,7 @@ rows = input.int(100, "Строк в профиле", minval = 20, maxval = 500,
 maxScan = input.int(5000, "Макс. баров для анализа", minval = 500, maxval = 5000, group = gR)
 inclToday = input.bool(false, "Включать текущую сессию в композиты", group = gR)
 liveCalc = input.bool(false, "Пересчитывать каждый бар (медленно)", group = gR)
+volMode = input.string("Авто", "Источник объёма", options = ["Авто", "Только реальный объём", "Кол-во баров (TPO)"], group = gR)
 
 // ─────────────────────────────── Какие профили
 gP = "Дневные композиты"
@@ -134,7 +135,8 @@ f_profile(int fromT, int toT) =>
                 break
             if not inSess[i]
                 continue
-            float bv = nz(volume[i])
+            float rv = nz(volume[i])
+            float bv = volMode == "Кол-во баров (TPO)" ? 1.0 : rv > 0 ? rv : volMode == "Авто" ? 1.0 : 0.0
             if bv > 0
                 int b1 = math.max(0, math.min(bins - 1, int((low[i] - lo) / step)))
                 int b2 = math.max(0, math.min(bins - 1, int((high[i] - lo) / step)))
@@ -142,32 +144,33 @@ f_profile(int fromT, int toT) =>
                 for b = b1 to b2
                     array.set(hist, b, array.get(hist, b) + per)
 
-        int pocIdx = 0
-        float mx = -1.0
-        for b = 0 to bins - 1
-            float v = array.get(hist, b)
-            if v > mx
-                mx := v
-                pocIdx := b
-
         float total = array.sum(hist)
-        float target = total * vaPct / 100.0
-        float acc = array.get(hist, pocIdx)
-        int up = pocIdx
-        int dn = pocIdx
-        while acc < target and (up < bins - 1 or dn > 0)
-            float vUp = up < bins - 1 ? array.get(hist, up + 1) : -1.0
-            float vDn = dn > 0 ? array.get(hist, dn - 1) : -1.0
-            if vUp >= vDn
-                up := up + 1
-                acc := acc + vUp
-            else
-                dn := dn - 1
-                acc := acc + vDn
+        if total > 0
+            int pocIdx = 0
+            float mx = -1.0
+            for b = 0 to bins - 1
+                float v = array.get(hist, b)
+                if v > mx
+                    mx := v
+                    pocIdx := b
 
-        poc := lo + (pocIdx + 0.5) * step
-        vah := lo + (up + 1) * step
-        val := lo + dn * step
+            float target = total * vaPct / 100.0
+            float acc = array.get(hist, pocIdx)
+            int up = pocIdx
+            int dn = pocIdx
+            while acc < target and (up < bins - 1 or dn > 0)
+                float vUp = up < bins - 1 ? array.get(hist, up + 1) : -1.0
+                float vDn = dn > 0 ? array.get(hist, dn - 1) : -1.0
+                if vUp >= vDn
+                    up := up + 1
+                    acc := acc + vUp
+                else
+                    dn := dn - 1
+                    acc := acc + vDn
+
+            poc := lo + (pocIdx + 0.5) * step
+            vah := lo + (up + 1) * step
+            val := lo + dn * step
 
     [poc, vah, val]
 
