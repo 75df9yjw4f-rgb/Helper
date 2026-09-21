@@ -1,0 +1,135 @@
+//@version=6
+// OI + Delta Positioning — матрица позиционирования в одной панели.
+//
+// Открытый интерес говорит, открылись позиции или закрылись.
+// Дельта говорит, кто был агрессором. Вместе они дают четыре состояния:
+//   OI вверх + дельта плюс  -> новые лонги
+//   OI вверх + дельта минус -> новые шорты
+//   OI вниз  + дельта плюс  -> закрытие шортов (сквиз)
+//   OI вниз  + дельта минус -> закрытие лонгов (ликвидация)
+//
+// Состояние засчитывается только когда ОБА показателя значимы относительно
+// своей нормы за последние N баров. Насыщенность цвета растёт со значимостью.
+//
+// Открытый интерес существует только у производных. На крипто-перпетуалах он
+// обновляется в реальном времени, у биржевых фьючерсов публикуется раз в сутки,
+// у спота его нет вовсе. Без OI индикатор работает как обычная дельта.
+indicator("OI + Delta Positioning", "OI+Δ", overlay = false, format = format.volume)
+
+// ─────────────────────────────── Дельта
+gD = "Дельта"
+ltf = input.timeframe("1", "Младший ТФ для расчёта дельты", group = gD)
+
+// ─────────────────────────────── Значимость
+gS = "Значимость"
+look   = input.int(50, "Окно нормы, баров", minval = 5, maxval = 500, group = gS)
+minSig = input.float(1.5, "Порог классификации", step = 0.5, minval = 0, group = gS)
+t2     = input.float(2.5, "Порог яркости 2", step = 0.5, group = gS)
+t3     = input.float(3.5, "Порог яркости 3", step = 0.5, group = gS)
+
+// ─────────────────────────────── Отображение
+gV = "Отображение"
+showOI    = input.bool(true,  "Линия изменения OI (нормированная)", group = gV)
+colorBars = input.bool(false, "Красить свечи на графике", group = gV)
+showTable = input.bool(true,  "Таблица состояния", group = gV)
+
+gC = "Цвета"
+cNewLong  = input.color(#089981, "Новые лонги", group = gC)
+cNewShort = input.color(#f23645, "Новые шорты", group = gC)
+cCovShort = input.color(#5fb3a1, "Закрытие шортов", group = gC)
+cCovLong  = input.color(#e6a23c, "Закрытие лонгов", group = gC)
+cNone     = input.color(#787b86, "Нет сигнала", group = gC)
+
+// ─────────────────────────────── Расчёт дельты
+// Приближение по направлению закрытия свечи младшего ТФ.
+// Это не истинная дельта по агрессору, но на низком ТФ достаточно близко.
+[aC, aO, aV] = request.security_lower_tf(syminfo.tickerid, ltf, [close, open, volume])
+
+float delta = 0.0
+bool haveLtf = not na(aC) and array.size(aC) > 0
+if haveLtf
+    for i = 0 to array.size(aC) - 1
+        float c = array.get(aC, i)
+        float o = array.get(aO, i)
+        float v = nz(array.get(aV, i))
+        delta := delta + (c > o ? v : c < o ? -v : 0.0)
+else
+    delta := close > open ? nz(volume) : close < open ? -nz(volume) : 0.0
+
+// ─────────────────────────────── Открытый интерес
+oi = request.security(syminfo.tickerid + "_OI", timeframe.period, close, ignore_invalid_symbol = true)
+bool haveOI = not na(oi)
+float oiCh = haveOI ? oi - nz(oi[1], oi) : 0.0
+
+// ─────────────────────────────── Нормы и значимость
+float dBase = ta.sma(math.abs(delta), look)
+float oBase = ta.sma(math.abs(oiCh), look)
+
+float dSig = dBase > 0 ? math.abs(delta) / dBase : 0.0
+float oSig = oBase > 0 ? math.abs(oiCh) / oBase : 0.0
+
+// Значимой считается свеча, где значимы обе метрики
+float sig = haveOI ? math.min(dSig, oSig) : dSig
+bool sigOK = sig >= minSig
+
+// ─────────────────────────────── Классификация
+bool oiUp = haveOI and oiCh > 0
+bool oiDn = haveOI and oiCh < 0
+bool dPos = delta > 0
+bool dNeg = delta < 0
+
+string state = "—"
+color  col   = cNone
+
+if sigOK and haveOI
+    if oiUp and dPos
+        state := "Новые лонги"
+        col := cNewLong
+    else if oiUp and dNeg
+        state := "Новые шорты"
+        col := cNewShort
+    else if oiDn and dPos
+        state := "Закрытие шортов"
+        col := cCovShort
+    else if oiDn and dNeg
+        state := "Закрытие лонгов"
+        col := cCovLong
+else if sigOK and not haveOI
+    state := dPos ? "Агрессия вверх (OI нет)" : "Агрессия вниз (OI нет)"
+    col := dPos ? cNewLong : cNewShort
+
+int transp = sig >= t3 ? 0 : sig >= t2 ? 25 : sig >= minSig ? 45 : 75
+color plotCol = color.new(col, transp)
+
+// ─────────────────────────────── Вывод
+// OI приводится к масштабу дельты, иначе на одной оси их не сравнить
+float oiScaled = (oBase > 0 and dBase > 0) ? oiCh / oBase * dBase : na
+
+plot(delta, "Дельта", color = plotCol, style = plot.style_columns)
+plot(showOI and haveOI ? oiScaled : na, "Изменение OI (норм.)", color = color.new(#b2b5be, 30), linewidth = 1)
+hline(0, "Ноль", color = color.new(color.gray, 60))
+
+barcolor(colorBars and state != "—" ? plotCol : na)
+
+// ─────────────────────────────── Таблица
+var table tbl = table.new(position.top_right, 2, 6, frame_color = color.new(color.gray, 50), frame_width = 1, border_color = color.new(color.gray, 70), border_width = 1)
+
+if showTable and barstate.islast
+    table.cell(tbl, 0, 0, "Состояние", text_color = color.gray, text_size = size.tiny)
+    table.cell(tbl, 1, 0, state, text_color = col, text_size = size.tiny)
+    table.cell(tbl, 0, 1, "Дельта", text_color = color.gray, text_size = size.tiny)
+    table.cell(tbl, 1, 1, str.tostring(delta, format.volume), text_color = color.new(#b2b5be, 0), text_size = size.tiny)
+    table.cell(tbl, 0, 2, "Изм. OI", text_color = color.gray, text_size = size.tiny)
+    table.cell(tbl, 1, 2, haveOI ? str.tostring(oiCh, format.volume) : "нет данных", text_color = color.new(#b2b5be, 0), text_size = size.tiny)
+    table.cell(tbl, 0, 3, "Значимость Δ", text_color = color.gray, text_size = size.tiny)
+    table.cell(tbl, 1, 3, str.tostring(dSig, "#.##") + "x", text_color = color.new(#b2b5be, 0), text_size = size.tiny)
+    table.cell(tbl, 0, 4, "Значимость OI", text_color = color.gray, text_size = size.tiny)
+    table.cell(tbl, 1, 4, haveOI ? str.tostring(oSig, "#.##") + "x" : "—", text_color = color.new(#b2b5be, 0), text_size = size.tiny)
+    table.cell(tbl, 0, 5, "Источник дельты", text_color = color.gray, text_size = size.tiny)
+    table.cell(tbl, 1, 5, haveLtf ? ltf : "бар (ТФ недоступен)", text_color = color.new(#b2b5be, 0), text_size = size.tiny)
+
+// ─────────────────────────────── Алерты
+alertcondition(state == "Новые лонги",     "Новые лонги",     "Значимый рост OI с положительной дельтой")
+alertcondition(state == "Новые шорты",     "Новые шорты",     "Значимый рост OI с отрицательной дельтой")
+alertcondition(state == "Закрытие шортов", "Закрытие шортов", "Значимое падение OI с положительной дельтой")
+alertcondition(state == "Закрытие лонгов", "Закрытие лонгов", "Значимое падение OI с отрицательной дельтой")
