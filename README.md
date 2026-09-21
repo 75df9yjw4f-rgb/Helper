@@ -11,6 +11,7 @@
 | [research/CHART-SETUP.md](research/CHART-SETUP.md) | Настройка графика в TradingView: точные параметры SVP и VWAP, два лэйаута, ловушки |
 | [research/DAILY-BIAS.md](research/DAILY-BIAS.md) | Дневной уклон по объёмному профилю: метод Jase, механика, сопоставление с A+, перенос на золото |
 | [research/ORDERFLOW-RULES.md](research/ORDERFLOW-RULES.md) | Семь правил чтения потока: баланс, Initial Balance, ложное поглощение, механика отказа гамма-уровней |
+| [research/OI-DELTA.md](research/OI-DELTA.md) | Открытый интерес и дельта: матрица позиционирования, поглощение против истощения, где OI вообще есть |
 | [research/GEX-CRITIQUE.md](research/GEX-CRITIQUE.md) | Почему GEX сам по себе не работает: разбор заявления о пятилетнем тесте, что такое charm |
 | [research/GEX-GOLD.md](research/GEX-GOLD.md) | Gamma exposure по золоту: бесплатный источник, определение стен, пересчёт GLD в XAUUSD |
 | [tools/volume_profile_levels.pine](tools/volume_profile_levels.pine) | Индикатор TradingView: POC, VAH, VAL за дневные композиты и календарные периоды |
