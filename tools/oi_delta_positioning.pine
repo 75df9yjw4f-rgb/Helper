@@ -31,7 +31,8 @@ t3     = input.float(3.5, "Порог яркости 3", step = 0.5, group = gS)
 gV = "Отображение"
 showOI    = input.bool(true,  "Линия изменения OI (нормированная)", group = gV)
 colorBars = input.bool(false, "Красить свечи на графике", group = gV)
-showTable = input.bool(true,  "Таблица состояния", group = gV)
+showTable = input.bool(true,  "Матрица состояний", group = gV)
+cntWin    = input.int(100, "Окно счётчика состояний, баров", minval = 10, group = gV)
 
 gC = "Цвета"
 cNewLong  = input.color(#089981, "Новые лонги", group = gC)
@@ -111,22 +112,37 @@ hline(0, "Ноль", color = color.new(color.gray, 60))
 
 barcolor(colorBars and state != "—" ? plotCol : na)
 
-// ─────────────────────────────── Таблица
-var table tbl = table.new(position.top_right, 2, 6, frame_color = color.new(color.gray, 50), frame_width = 1, border_color = color.new(color.gray, 70), border_width = 1)
+// ─────────────────────────────── Матрица состояний
+float nNL = math.sum(state == "Новые лонги"     ? 1.0 : 0.0, cntWin)
+float nNS = math.sum(state == "Новые шорты"     ? 1.0 : 0.0, cntWin)
+float nCS = math.sum(state == "Закрытие шортов" ? 1.0 : 0.0, cntWin)
+float nCL = math.sum(state == "Закрытие лонгов" ? 1.0 : 0.0, cntWin)
+
+var table tbl = table.new(position.top_right, 3, 5, frame_color = color.new(color.gray, 50), frame_width = 1, border_color = color.new(color.gray, 70), border_width = 1)
 
 if showTable and barstate.islast
-    table.cell(tbl, 0, 0, "Состояние", text_color = color.gray, text_size = size.tiny)
-    table.cell(tbl, 1, 0, state, text_color = col, text_size = size.tiny)
-    table.cell(tbl, 0, 1, "Дельта", text_color = color.gray, text_size = size.tiny)
-    table.cell(tbl, 1, 1, str.tostring(delta, format.volume), text_color = color.new(#b2b5be, 0), text_size = size.tiny)
-    table.cell(tbl, 0, 2, "Изм. OI", text_color = color.gray, text_size = size.tiny)
-    table.cell(tbl, 1, 2, haveOI ? str.tostring(oiCh, format.volume) : "нет данных", text_color = color.new(#b2b5be, 0), text_size = size.tiny)
-    table.cell(tbl, 0, 3, "Значимость Δ", text_color = color.gray, text_size = size.tiny)
-    table.cell(tbl, 1, 3, str.tostring(dSig, "#.##") + "x", text_color = color.new(#b2b5be, 0), text_size = size.tiny)
-    table.cell(tbl, 0, 4, "Значимость OI", text_color = color.gray, text_size = size.tiny)
-    table.cell(tbl, 1, 4, haveOI ? str.tostring(oSig, "#.##") + "x" : "—", text_color = color.new(#b2b5be, 0), text_size = size.tiny)
-    table.cell(tbl, 0, 5, "Источник дельты", text_color = color.gray, text_size = size.tiny)
-    table.cell(tbl, 1, 5, haveLtf ? ltf : "бар (ТФ недоступен)", text_color = color.new(#b2b5be, 0), text_size = size.tiny)
+    color bgIdle = color.new(color.gray, 92)
+    color bgHdr  = color.new(color.gray, 80)
+
+    table.cell(tbl, 0, 0, "",         bgcolor = bgHdr)
+    table.cell(tbl, 1, 0, "Дельта +", text_color = color.gray, text_size = size.tiny, bgcolor = bgHdr)
+    table.cell(tbl, 2, 0, "Дельта −", text_color = color.gray, text_size = size.tiny, bgcolor = bgHdr)
+
+    table.cell(tbl, 0, 1, "OI ↑", text_color = color.gray, text_size = size.tiny, bgcolor = bgHdr)
+    table.cell(tbl, 1, 1, "Новые лонги\n" + str.tostring(nNL, "#"), text_color = cNewLong,  text_size = size.tiny, bgcolor = state == "Новые лонги"     ? color.new(cNewLong,  65) : bgIdle)
+    table.cell(tbl, 2, 1, "Новые шорты\n" + str.tostring(nNS, "#"), text_color = cNewShort, text_size = size.tiny, bgcolor = state == "Новые шорты"     ? color.new(cNewShort, 65) : bgIdle)
+
+    table.cell(tbl, 0, 2, "OI ↓", text_color = color.gray, text_size = size.tiny, bgcolor = bgHdr)
+    table.cell(tbl, 1, 2, "Сквиз\n"      + str.tostring(nCS, "#"), text_color = cCovShort, text_size = size.tiny, bgcolor = state == "Закрытие шортов" ? color.new(cCovShort, 65) : bgIdle)
+    table.cell(tbl, 2, 2, "Ликвидация\n" + str.tostring(nCL, "#"), text_color = cCovLong,  text_size = size.tiny, bgcolor = state == "Закрытие лонгов" ? color.new(cCovLong,  65) : bgIdle)
+
+    table.cell(tbl, 0, 3, "Значимость", text_color = color.gray, text_size = size.tiny)
+    table.cell(tbl, 1, 3, "Δ " + str.tostring(dSig, "#.#") + "x", text_color = dSig >= minSig ? color.new(#b2b5be, 0) : color.gray, text_size = size.tiny)
+    table.cell(tbl, 2, 3, haveOI ? "OI " + str.tostring(oSig, "#.#") + "x" : "OI нет", text_color = (haveOI and oSig >= minSig) ? color.new(#b2b5be, 0) : color.gray, text_size = size.tiny)
+
+    table.cell(tbl, 0, 4, "Данные", text_color = color.gray, text_size = size.tiny)
+    table.cell(tbl, 1, 4, haveLtf ? ltf : "бар", text_color = color.gray, text_size = size.tiny)
+    table.cell(tbl, 2, 4, haveOI ? "OI есть" : "OI нет", text_color = haveOI ? cNewLong : cNewShort, text_size = size.tiny)
 
 // ─────────────────────────────── Алерты
 alertcondition(state == "Новые лонги",     "Новые лонги",     "Значимый рост OI с положительной дельтой")
