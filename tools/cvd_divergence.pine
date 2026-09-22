@@ -1,32 +1,27 @@
 //@version=6
-// CVD Divergence — кумулятивная дельта и её расхождения с ценой.
+// CVD Divergence — ищет расхождения между ценой и УЖЕ СТОЯЩИМ на графике
+// индикатором кумулятивной дельты. Своей дельты не считает и своего графика
+// не рисует: серия берётся через input.source из другого индикатора.
 //
-// Что делает. Находит экстремумы ЦЕНЫ (пивоты) и сравнивает их с уровнем
-// кумулятивной дельты на тех же барах. Если цена сделала более высокий максимум,
-// а дельта на этом максимуме ниже, чем на предыдущем, — это медвежья дивергенция:
-// новый хай сделан без роста агрессивных покупок. Зеркально для минимумов.
+// Логика. Экстремумы ищутся по ЦЕНЕ. На тех же самых барах читается значение
+// CVD. Цена выше, CVD ниже — медвежья дивергенция. Цена ниже, CVD выше — бычья.
+// Проводятся две линии между одними и теми же двумя барами: на панели дельты
+// и на ценовом графике (через force_overlay).
 //
-// Как рисует. Две линии между ОДНИМИ И ТЕМИ ЖЕ двумя барами: одна на панели
-// дельты, вторая на ценовом графике через force_overlay. Индикатор при этом один.
+// Установка:
+//   1. В индикаторе CDV поставьте Style = Line. В режиме Candle плот "CDV Line"
+//      пустой (в коде ctl присваивается только в ветке Line), и брать оттуда
+//      нечего.
+//   2. Добавьте этот индикатор, перетащите его в панель к CDV (Move to ->
+//      существующая панель), чтобы линии легли на саму дельту.
+//   3. В настройках выберите Источник = "CDV: CDV Line".
 //
-// Почему пивоты берутся по цене, а не по дельте. Дивергенция это утверждение
-// «цена сделала, дельта не сделала». Значит опорные точки задаёт цена, а дельта
-// только читается на этих же барах. Иначе линии в двух панелях соединяли бы
-// разные бары и сравнивать было бы нечего.
-//
-// Задержка. Пивот подтверждается только через R баров после экстремума. Это цена
-// достоверности, а не дефект: раньше этого момента неизвестно, экстремум ли это.
-//
-// Дельта считается либо по младшему таймфрейму, либо по телу свечи (метод из
-// CDV LonesomeTheBlue). Heikin Ashi намеренно не используется: HA смещает уровни,
-// и линия, проведённая по значению HA, не соответствует реальной дельте.
-indicator("CVD Divergence", "CVD div", overlay = false, format = format.volume, max_lines_count = 500, max_labels_count = 500)
+// Пивот подтверждается через R баров после экстремума. Раньше неизвестно,
+// экстремум ли это, поэтому линия и появляется с задержкой.
+indicator("CVD Divergence", "CVD div", overlay = false, max_lines_count = 500, max_labels_count = 500)
 
-// ─────────────────────────────── Дельта
-gD = "Дельта"
-calcMode = input.string("Младший ТФ", "Как считать дельту", options = ["Младший ТФ", "По телу свечи"], group = gD)
-ltf      = input.timeframe("1", "Младший ТФ", group = gD)
-resetStr = input.string("Не сбрасывать", "Сброс накопления", options = ["Не сбрасывать", "Каждый день", "Каждую неделю"], group = gD)
+// ─────────────────────────────── Источник
+src = input.source(close, "Источник: плот CVD с графика", tooltip = "Выберите плот индикатора кумулятивной дельты, например CDV: CDV Line")
 
 // ─────────────────────────────── Дивергенции
 gP = "Дивергенции"
@@ -34,65 +29,19 @@ piv     = input.int(5,   "Пивот: баров слева", minval = 1, group 
 pivR    = input.int(5,   "Пивот: баров справа (задержка подтверждения)", minval = 1, group = gP)
 minGap  = input.int(5,   "Мин. расстояние между экстремумами, баров", minval = 1, group = gP)
 maxGap  = input.int(100, "Макс. расстояние между экстремумами, баров", minval = 2, group = gP)
-useBear = input.bool(true, "Медвежьи: цена выше, дельта ниже", group = gP)
-useBull = input.bool(true, "Бычьи: цена ниже, дельта выше", group = gP)
+useBear = input.bool(true, "Медвежьи: цена выше, CVD ниже", group = gP)
+useBull = input.bool(true, "Бычьи: цена ниже, CVD выше", group = gP)
 
 // ─────────────────────────────── Отображение
 gV = "Отображение"
-styleStr = input.string("Линия", "Вид дельты", options = ["Линия", "Свечи"], group = gV)
-onPrice  = input.bool(true, "Дублировать линии на графике цены", group = gV)
+onCvd    = input.bool(true, "Линия на панели дельты", group = gV)
+onPrice  = input.bool(true, "Линия на графике цены",  group = gV)
 showLbl  = input.bool(true, "Подписи", group = gV)
 lw       = input.int(2, "Толщина линии", minval = 1, maxval = 4, group = gV)
 keepN    = input.int(20, "Сколько последних дивергенций держать", minval = 1, group = gV)
 showInfo = input.bool(true, "Строка состояния", group = gV)
-
-// ─────────────────────────────── Цвета
-gC = "Цвета"
-cBear = input.color(#f23645, "Медвежья дивергенция", group = gC)
-cBull = input.color(#089981, "Бычья дивергенция",   group = gC)
-cLine = input.color(#2962ff, "Линия дельты",        group = gC)
-cUp   = input.color(#089981, "Свеча вверх",         group = gC)
-cDn   = input.color(#f23645, "Свеча вниз",          group = gC)
-
-// ─────────────────────────────── Расчёт дельты
-// Вариант 1: по телу свечи. Доля объёма, отнесённая к агрессору, оценивается
-// по соотношению тела и теней. Тождеством не является, это оценка.
-float tw  = high - math.max(open, close)
-float bw  = math.min(open, close) - low
-float bd  = math.abs(close - open)
-float den = tw + bw + bd
-float rt  = den > 0 ? 0.5 * (tw + bw + 2 * bd) / den : 0.5
-float dBody = (close >= open ? 1.0 : -1.0) * nz(volume) * rt
-
-// Вариант 2: по младшему ТФ. Каждая мелкая свеча относится к покупателям или
-// продавцам по направлению её закрытия. Тоже приближение, но ближе к истине.
-[aC, aO, aV] = request.security_lower_tf(syminfo.tickerid, ltf, [close, open, volume])
-bool haveLtf = not na(aC) and array.size(aC) > 0
-float dLtf = 0.0
-if haveLtf
-    for i = 0 to array.size(aC) - 1
-        float cc = array.get(aC, i)
-        float oo = array.get(aO, i)
-        float vv = nz(array.get(aV, i))
-        dLtf := dLtf + (cc > oo ? vv : cc < oo ? -vv : 0.0)
-
-bool  useLtf = calcMode == "Младший ТФ" and haveLtf
-float delta  = useLtf ? dLtf : dBody
-
-// ─────────────────────────────── Накопление
-bool newP = resetStr == "Каждый день" ? timeframe.change("D") : resetStr == "Каждую неделю" ? timeframe.change("W") : false
-var float cvd = 0.0
-cvd := (newP ? 0.0 : nz(cvd[1])) + delta
-
-// ─────────────────────────────── Вывод дельты
-float cO = nz(cvd[1], cvd)
-float cH = math.max(cvd, cO)
-float cL = math.min(cvd, cO)
-bool  cnd = styleStr == "Свечи"
-
-plot(cnd ? na : cvd, "CVD", color = cLine, linewidth = 2)
-plotcandle(cnd ? cO : na, cnd ? cH : na, cnd ? cL : na, cnd ? cvd : na, "CVD свечи", color = cvd >= cO ? cUp : cDn, bordercolor = cvd >= cO ? cUp : cDn, wickcolor = color.new(#b2b5be, 40))
-hline(0, "Ноль", color = color.new(color.gray, 70))
+cBear    = input.color(#f23645, "Медвежья", inline = "c", group = gV)
+cBull    = input.color(#089981, "Бычья",    inline = "c", group = gV)
 
 // ─────────────────────────────── Память по экстремумам
 var int   hB1 = 0
@@ -111,75 +60,82 @@ var float lP2 = 0.0
 var float lC2 = 0.0
 var int   lN  = 0
 
-// При сбросе накопления дельта обнуляется, и сравнивать её уровни через границу
-// периода бессмысленно. Память экстремумов чистится вместе с накоплением.
-if newP and resetStr != "Не сбрасывать"
-    hN := 0
-    lN := 0
-
 var array<line>  lns = array.new<line>()
 var array<label> lbs = array.new<label>()
 
-// ─────────────────────────────── Поиск дивергенций
+// ─────────────────────────────── Поиск
 float ph = ta.pivothigh(high, piv, pivR)
 float pl = ta.pivotlow(low,  piv, pivR)
 
 bool bear = false
 bool bull = false
 
-if not na(ph)
+var int cntBear = 0
+var int cntBull = 0
+
+if not na(ph) and not na(src[pivR])
     hB1 := hB2
     hP1 := hP2
     hC1 := hC2
     hB2 := bar_index - pivR
     hP2 := ph
-    hC2 := cvd[pivR]
+    hC2 := src[pivR]
     hN  := hN + 1
     int gapH = hB2 - hB1
     if useBear and hN >= 2 and gapH >= minGap and gapH <= maxGap and hP2 > hP1 and hC2 < hC1
         bear := true
-        array.push(lns, line.new(hB1, hC1, hB2, hC2, xloc = xloc.bar_index, color = cBear, width = lw))
+        cntBear := cntBear + 1
+        if onCvd
+            array.push(lns, line.new(hB1, hC1, hB2, hC2, xloc = xloc.bar_index, color = cBear, width = lw))
+            if showLbl
+                array.push(lbs, label.new(hB2, hC2, "CVD div", xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_down, color = color.new(cBear, 15), textcolor = color.white, size = size.tiny))
         if onPrice
             array.push(lns, line.new(hB1, hP1, hB2, hP2, xloc = xloc.bar_index, color = cBear, width = lw, force_overlay = true))
-        if showLbl
-            array.push(lbs, label.new(hB2, hC2, "CVD div", xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_down, color = color.new(cBear, 15), textcolor = color.white, size = size.tiny))
-            if onPrice
+            if showLbl
                 array.push(lbs, label.new(hB2, hP2, "CVD div", xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_down, color = color.new(cBear, 15), textcolor = color.white, size = size.tiny, force_overlay = true))
 
-if not na(pl)
+if not na(pl) and not na(src[pivR])
     lB1 := lB2
     lP1 := lP2
     lC1 := lC2
     lB2 := bar_index - pivR
     lP2 := pl
-    lC2 := cvd[pivR]
+    lC2 := src[pivR]
     lN  := lN + 1
     int gapL = lB2 - lB1
     if useBull and lN >= 2 and gapL >= minGap and gapL <= maxGap and lP2 < lP1 and lC2 > lC1
         bull := true
-        array.push(lns, line.new(lB1, lC1, lB2, lC2, xloc = xloc.bar_index, color = cBull, width = lw))
+        cntBull := cntBull + 1
+        if onCvd
+            array.push(lns, line.new(lB1, lC1, lB2, lC2, xloc = xloc.bar_index, color = cBull, width = lw))
+            if showLbl
+                array.push(lbs, label.new(lB2, lC2, "CVD div", xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_up, color = color.new(cBull, 15), textcolor = color.white, size = size.tiny))
         if onPrice
             array.push(lns, line.new(lB1, lP1, lB2, lP2, xloc = xloc.bar_index, color = cBull, width = lw, force_overlay = true))
-        if showLbl
-            array.push(lbs, label.new(lB2, lC2, "CVD div", xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_up, color = color.new(cBull, 15), textcolor = color.white, size = size.tiny))
-            if onPrice
+            if showLbl
                 array.push(lbs, label.new(lB2, lP2, "CVD div", xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_up, color = color.new(cBull, 15), textcolor = color.white, size = size.tiny, force_overlay = true))
 
 // Старые отрисовки удаляются, иначе упрёмся в лимит объектов
-while array.size(lns) > keepN * 2
+int perDiv = (onCvd ? 1 : 0) + (onPrice ? 1 : 0)
+int maxObj = math.max(keepN * math.max(perDiv, 1), 2)
+while array.size(lns) > maxObj
     line.delete(array.shift(lns))
-while array.size(lbs) > keepN * 2
+while array.size(lbs) > maxObj
     label.delete(array.shift(lbs))
+
+// Невидимый плот: чтобы панель имела масштаб дельты, даже если её не слили с CDV
+plot(src, "Источник", color = color.new(color.gray, 100), display = display.none, editable = false)
 
 // ─────────────────────────────── Строка состояния
 var table inf = table.new(position.bottom_right, 1, 2, frame_color = color.new(color.gray, 60), frame_width = 1, border_color = color.new(color.gray, 80), border_width = 1)
 
 if showInfo and barstate.islast
-    bool noVol = na(volume) or nz(volume) == 0
-    string srcTxt = useLtf ? "дельта по " + ltf : calcMode == "Младший ТФ" ? "младший ТФ недоступен, считаю по телу" : "дельта по телу свечи"
-    table.cell(inf, 0, 0, srcTxt, text_color = color.gray, text_size = size.tiny)
-    table.cell(inf, 0, 1, noVol ? "ОБЪЁМА НЕТ — CVD не имеет смысла" : "сброс: " + resetStr, text_color = noVol ? cBear : color.gray, text_size = size.tiny)
+    bool noSrc  = na(src)
+    bool isPrice = src == close and src[1] == close[1] and src[2] == close[2]
+    string s = noSrc ? "ИСТОЧНИК ПУСТ: в CDV поставьте Style = Line" : isPrice ? "ИСТОЧНИК = close: выберите плот CDV" : "источник подключён"
+    table.cell(inf, 0, 0, s, text_color = (noSrc or isPrice) ? cBear : color.gray, text_size = size.tiny)
+    table.cell(inf, 0, 1, "дивергенций: " + str.tostring(cntBear) + " медв. / " + str.tostring(cntBull) + " быч.", text_color = color.gray, text_size = size.tiny)
 
 // ─────────────────────────────── Алерты
-alertcondition(bear, "Медвежья CVD-дивергенция", "Цена обновила максимум, кумулятивная дельта — нет")
-alertcondition(bull, "Бычья CVD-дивергенция",    "Цена обновила минимум, кумулятивная дельта — нет")
+alertcondition(bear, "Медвежья CVD-дивергенция", "Цена обновила максимум, CVD — нет")
+alertcondition(bull, "Бычья CVD-дивергенция",    "Цена обновила минимум, CVD — нет")
