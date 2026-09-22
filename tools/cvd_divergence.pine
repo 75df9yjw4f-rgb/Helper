@@ -4,9 +4,17 @@
 // не рисует: серия берётся через input.source из другого индикатора.
 //
 // Логика. Экстремумы ищутся по ЦЕНЕ. На тех же самых барах читается значение
-// CVD. Цена выше, CVD ниже — медвежья дивергенция. Цена ниже, CVD выше — бычья.
+// CVD. Четыре случая:
+//   на максимумах: цена выше, CVD ниже — обычная медвежья (разворот вниз)
+//   на максимумах: цена ниже, CVD выше — скрытая медвежья (продолжение вниз)
+//   на минимумах:  цена ниже, CVD выше — обычная бычья (разворот вверх)
+//   на минимумах:  цена выше, CVD ниже — скрытая бычья (продолжение вверх)
 // Линия проводится по цене между двумя экстремумами, а значения CVD в этих же
-// точках выводятся в подписи: видно, что цена пошла вверх, а дельта вниз.
+// точках выводятся в подписи: видно, куда пошла цена и куда пошла дельта.
+//
+// Сравнивается не только соседний экстремум, а последние maxPiv штук, иначе
+// расхождение между двумя минимумами, разделёнными промежуточными минимумами,
+// вообще не попадает в перебор.
 //
 // Установка (ничего перетаскивать не надо):
 //   1. В индикаторе CDV поставьте Style = Line. В режиме Candle плот "CDV Line"
@@ -36,9 +44,12 @@ gP = "Дивергенции"
 piv     = input.int(5,   "Пивот: баров слева", minval = 1, group = gP)
 pivR    = input.int(5,   "Пивот: баров справа (задержка подтверждения)", minval = 1, group = gP)
 minGap  = input.int(5,   "Мин. расстояние между экстремумами, баров", minval = 1, group = gP)
-maxGap  = input.int(100, "Макс. расстояние между экстремумами, баров", minval = 2, group = gP)
-useBear = input.bool(true, "Медвежьи: цена выше, CVD ниже", group = gP)
-useBull = input.bool(true, "Бычьи: цена ниже, CVD выше", group = gP)
+maxGap  = input.int(150, "Макс. расстояние между экстремумами, баров", minval = 2, group = gP)
+maxPiv  = input.int(5,   "Сколько прошлых экстремумов сравнивать", minval = 1, maxval = 20, group = gP, tooltip = "1 = только соседний экстремум. Больше = ловит дивергенции через промежуточные пики.")
+useBear = input.bool(true, "Обычные медвежьи: на максимумах цена выше, CVD ниже", group = gP)
+useBull = input.bool(true, "Обычные бычьи: на минимумах цена ниже, CVD выше", group = gP)
+useHidB = input.bool(true, "Скрытые медвежьи: на максимумах цена ниже, CVD выше", group = gP)
+useHidL = input.bool(true, "Скрытые бычьи: на минимумах цена выше, CVD ниже", group = gP)
 
 // ─────────────────────────────── Отображение
 gV = "Отображение"
@@ -64,21 +75,15 @@ cE1      = input.color(#2962ff, "Быстрая", inline = "ce", group = gE)
 cE2      = input.color(#ff9800, "Медленная", inline = "ce", group = gE)
 
 // ─────────────────────────────── Память по экстремумам
-var int   hB1 = 0
-var float hP1 = 0.0
-var float hC1 = 0.0
-var int   hB2 = 0
-var float hP2 = 0.0
-var float hC2 = 0.0
-var int   hN  = 0
-
-var int   lB1 = 0
-var float lP1 = 0.0
-var float lC1 = 0.0
-var int   lB2 = 0
-var float lP2 = 0.0
-var float lC2 = 0.0
-var int   lN  = 0
+// Хранятся последние maxPiv экстремумов каждого типа, а не один предыдущий.
+// Иначе дивергенция между минимумами, разделёнными промежуточными минимумами,
+// никогда не попадёт в сравнение.
+var array<int>   phB = array.new<int>()
+var array<float> phP = array.new<float>()
+var array<float> phC = array.new<float>()
+var array<int>   plB = array.new<int>()
+var array<float> plP = array.new<float>()
+var array<float> plC = array.new<float>()
 
 var array<line>  lns = array.new<line>()
 var array<label> lbs = array.new<label>()
@@ -88,59 +93,92 @@ f_n(float v) =>
     float a = math.abs(v)
     a >= 1e9 ? str.tostring(v / 1e9, "#.##") + "B" : a >= 1e6 ? str.tostring(v / 1e6, "#.##") + "M" : a >= 1e3 ? str.tostring(v / 1e3, "#.#") + "K" : str.tostring(v, "#.#")
 
+// Рисует пару линий: по цене и, если включено, по дельте
+f_mark(int b1, float p1, float c1, int b2, float p2, float c2, color col, string txt, bool atHigh) =>
+    string st = atHigh ? label.style_label_down : label.style_label_up
+    if onCvd
+        array.push(lns, line.new(b1, c1, b2, c2, xloc = xloc.bar_index, color = col, width = lw))
+        if showLbl
+            array.push(lbs, label.new(b2, c2, txt, xloc = xloc.bar_index, yloc = yloc.price, style = st, color = color.new(col, 15), textcolor = color.white, size = size.tiny))
+    if onPrice
+        array.push(lns, line.new(b1, p1, b2, p2, xloc = xloc.bar_index, color = col, width = lw, force_overlay = true))
+        if showLbl
+            array.push(lbs, label.new(b2, p2, txt, xloc = xloc.bar_index, yloc = yloc.price, style = st, color = color.new(col, 15), textcolor = color.white, size = size.tiny, force_overlay = true))
+    0
+
 // ─────────────────────────────── Поиск
 float ph = ta.pivothigh(high, piv, pivR)
 float pl = ta.pivotlow(low,  piv, pivR)
 
-bool bear = false
-bool bull = false
+bool bearReg = false
+bool bearHid = false
+bool bullReg = false
+bool bullHid = false
 
 var int cntBear = 0
 var int cntBull = 0
 
+// Максимумы. Перебор идёт от самого старого экстремума к новым, поэтому при
+// нескольких подходящих парах выбирается та, что охватывает больший участок.
 if not na(ph) and not na(src[pivR])
-    hB1 := hB2
-    hP1 := hP2
-    hC1 := hC2
-    hB2 := bar_index - pivR
-    hP2 := ph
-    hC2 := src[pivR]
-    hN  := hN + 1
-    int gapH = hB2 - hB1
-    if useBear and hN >= 2 and gapH >= minGap and gapH <= maxGap and hP2 > hP1 and hC2 < hC1
-        bear := true
-        cntBear := cntBear + 1
-        string txtH = "CVD " + f_n(hC1) + " -> " + f_n(hC2)
-        if onCvd
-            array.push(lns, line.new(hB1, hC1, hB2, hC2, xloc = xloc.bar_index, color = cBear, width = lw))
-            if showLbl
-                array.push(lbs, label.new(hB2, hC2, txtH, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_down, color = color.new(cBear, 15), textcolor = color.white, size = size.tiny))
-        if onPrice
-            array.push(lns, line.new(hB1, hP1, hB2, hP2, xloc = xloc.bar_index, color = cBear, width = lw, force_overlay = true))
-            if showLbl
-                array.push(lbs, label.new(hB2, hP2, txtH, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_down, color = color.new(cBear, 15), textcolor = color.white, size = size.tiny, force_overlay = true))
+    int   bNow = bar_index - pivR
+    float pNow = ph
+    float cNow = src[pivR]
+    if array.size(phB) > 0
+        for i = 0 to array.size(phB) - 1
+            int   b0 = array.get(phB, i)
+            float p0 = array.get(phP, i)
+            float c0 = array.get(phC, i)
+            int   gp = bNow - b0
+            if gp >= minGap and gp <= maxGap
+                bool reg = useBear and pNow > p0 and cNow < c0
+                bool hid = useHidB and pNow < p0 and cNow > c0
+                if reg or hid
+                    bearReg := reg
+                    bearHid := hid
+                    cntBear := cntBear + 1
+                    string t = (reg ? "CVD div " : "CVD скр. ") + f_n(c0) + " -> " + f_n(cNow)
+                    int drawn = f_mark(b0, p0, c0, bNow, pNow, cNow, cBear, t, true)
+                    break
+    array.push(phB, bNow)
+    array.push(phP, pNow)
+    array.push(phC, cNow)
+    while array.size(phB) > maxPiv
+        array.shift(phB)
+        array.shift(phP)
+        array.shift(phC)
 
+// Минимумы
 if not na(pl) and not na(src[pivR])
-    lB1 := lB2
-    lP1 := lP2
-    lC1 := lC2
-    lB2 := bar_index - pivR
-    lP2 := pl
-    lC2 := src[pivR]
-    lN  := lN + 1
-    int gapL = lB2 - lB1
-    if useBull and lN >= 2 and gapL >= minGap and gapL <= maxGap and lP2 < lP1 and lC2 > lC1
-        bull := true
-        cntBull := cntBull + 1
-        string txtL = "CVD " + f_n(lC1) + " -> " + f_n(lC2)
-        if onCvd
-            array.push(lns, line.new(lB1, lC1, lB2, lC2, xloc = xloc.bar_index, color = cBull, width = lw))
-            if showLbl
-                array.push(lbs, label.new(lB2, lC2, txtL, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_up, color = color.new(cBull, 15), textcolor = color.white, size = size.tiny))
-        if onPrice
-            array.push(lns, line.new(lB1, lP1, lB2, lP2, xloc = xloc.bar_index, color = cBull, width = lw, force_overlay = true))
-            if showLbl
-                array.push(lbs, label.new(lB2, lP2, txtL, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_up, color = color.new(cBull, 15), textcolor = color.white, size = size.tiny, force_overlay = true))
+    int   bNow = bar_index - pivR
+    float pNow = pl
+    float cNow = src[pivR]
+    if array.size(plB) > 0
+        for i = 0 to array.size(plB) - 1
+            int   b0 = array.get(plB, i)
+            float p0 = array.get(plP, i)
+            float c0 = array.get(plC, i)
+            int   gp = bNow - b0
+            if gp >= minGap and gp <= maxGap
+                bool reg = useBull and pNow < p0 and cNow > c0
+                bool hid = useHidL and pNow > p0 and cNow < c0
+                if reg or hid
+                    bullReg := reg
+                    bullHid := hid
+                    cntBull := cntBull + 1
+                    string t = (reg ? "CVD div " : "CVD скр. ") + f_n(c0) + " -> " + f_n(cNow)
+                    int drawn = f_mark(b0, p0, c0, bNow, pNow, cNow, cBull, t, false)
+                    break
+    array.push(plB, bNow)
+    array.push(plP, pNow)
+    array.push(plC, cNow)
+    while array.size(plB) > maxPiv
+        array.shift(plB)
+        array.shift(plP)
+        array.shift(plC)
+
+bool bear = bearReg or bearHid
+bool bull = bullReg or bullHid
 
 // ─────────────────────────────── EMA и пересечения
 // Считается после поиска дивергенций, чтобы можно было проверить совпадение.
@@ -197,8 +235,10 @@ if showInfo and barstate.islast
     table.cell(inf, 0, 2, emaTxt, text_color = useEma ? (e1 > e2 ? cBull : cBear) : color.gray, text_size = size.tiny)
 
 // ─────────────────────────────── Алерты
-alertcondition(bear, "Медвежья CVD-дивергенция", "Цена обновила максимум, CVD — нет")
-alertcondition(bull, "Бычья CVD-дивергенция",    "Цена обновила минимум, CVD — нет")
+alertcondition(bearReg, "Медвежья CVD-дивергенция",        "Цена обновила максимум, CVD — нет")
+alertcondition(bullReg, "Бычья CVD-дивергенция",           "Цена обновила минимум, CVD — нет")
+alertcondition(bearHid, "Скрытая медвежья CVD-дивергенция", "Максимум цены ниже, максимум CVD выше")
+alertcondition(bullHid, "Скрытая бычья CVD-дивергенция",    "Минимум цены выше, минимум CVD ниже")
 alertcondition(xUp,     "Пересечение EMA вверх",  "Быстрая EMA пересекла медленную снизу вверх")
 alertcondition(xDn,     "Пересечение EMA вниз",   "Быстрая EMA пересекла медленную сверху вниз")
 alertcondition(confUp,  "EMA вверх после бычьей дивергенции",   "Пересечение EMA вверх вскоре после бычьей CVD-дивергенции")
