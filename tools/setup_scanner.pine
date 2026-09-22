@@ -1,0 +1,297 @@
+//@version=6
+// Setup Scanner — отмечает сетап: уровень профиля + EMA + дивергенция дельты.
+//
+// Тактика пользователя, записана как есть:
+//   профиль объёма по скользящему окну 100-400 баров на 1 минуте,
+//   уровни VAL / POC / VAH,
+//   EMA 21,
+//   дивергенция кумулятивной дельты.
+// Сигнал, когда цена ПРОБИВАЕТ уровень или ОТСКАКИВАЕТ от него, и это
+// сопровождается пробоем либо ретестом EMA и дивергенцией той же стороны.
+//
+// Решения, принятые при формализации (меняются во входных данных):
+//   пробой считается по ЗАКРЫТИЮ, а не по тени;
+//   ретест EMA это бар, коснувшийся EMA и закрывшийся на нужной стороне;
+//   три условия должны сойтись в окне winBars баров, порядок любой;
+//   сигнал срабатывает на баре, где сошлось последнее из трёх условий.
+//
+// ВАЖНО про скользящий профиль. POC, VAH и VAL пересчитываются на каждом баре,
+// поэтому уровень сам движется. Пересечение может возникнуть не потому, что
+// цена пошла, а потому, что уровень уехал. Это свойство скользящего окна,
+// а не ошибка. Чем короче окно, тем подвижнее уровни.
+//
+// CVD берётся из уже стоящего на графике индикатора через input.source.
+// Скрипт не считает дельту сам.
+indicator("Setup Scanner: VP + EMA + CVD div", "Setup", overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+// ─────────────────────────────── Источник дельты
+src = input.source(close, "Источник: плот CVD с графика", tooltip = "Выберите плот индикатора кумулятивной дельты, например CDV: CDV Line. В самом CDV должен стоять Style = Line.")
+
+// ─────────────────────────────── Профиль объёма
+gVP = "Профиль объёма"
+vpLen  = input.int(200, "Окно профиля, баров", minval = 20, maxval = 1000, group = gVP, tooltip = "Ваш диапазон 100-400.")
+vpRows = input.int(24,  "Строк профиля", minval = 10, maxval = 100, group = gVP)
+vpVA   = input.float(70, "Область стоимости, %", minval = 30, maxval = 95, step = 5, group = gVP)
+vpLast = input.int(3000, "Считать профиль только на последних N барах", minval = 200, group = gVP, tooltip = "Ограничение по скорости. На более старой истории уровни и сигналы не строятся.")
+showLvl = input.bool(true, "Показывать уровни", group = gVP)
+
+// ─────────────────────────────── EMA
+gE = "EMA"
+emaLen = input.int(21, "Период EMA", minval = 1, group = gE)
+emaSrc = input.source(close, "Цена для EMA", group = gE)
+showEma = input.bool(true, "Показывать EMA", group = gE)
+
+// ─────────────────────────────── Дивергенции
+gD = "Дивергенции"
+piv      = input.int(5,   "Пивот: баров слева", minval = 1, group = gD)
+pivR     = input.int(5,   "Пивот: баров справа (задержка подтверждения)", minval = 1, group = gD)
+minGap   = input.int(5,   "Мин. расстояние между экстремумами", minval = 1, group = gD)
+maxGap   = input.int(150, "Макс. расстояние между экстремумами", minval = 2, group = gD)
+maxPiv   = input.int(5,   "Сколько прошлых экстремумов сравнивать", minval = 1, maxval = 20, group = gD)
+useReg   = input.bool(true, "Обычные дивергенции", group = gD)
+useHid   = input.bool(true, "Скрытые дивергенции", group = gD)
+showDiv  = input.bool(true, "Рисовать линии дивергенций", group = gD)
+
+// ─────────────────────────────── Сетап
+gS = "Сетап"
+winBars = input.int(10, "Окно совмещения условий, баров", minval = 1, group = gS)
+tolTick = input.int(2,  "Допуск касания уровня, тиков", minval = 0, group = gS)
+useVAH  = input.bool(true, "Работать от VAH", group = gS)
+usePOC  = input.bool(true, "Работать от POC", group = gS)
+useVAL  = input.bool(true, "Работать от VAL", group = gS)
+useBrk  = input.bool(true, "Пробои уровня", group = gS)
+useBnc  = input.bool(true, "Отскоки от уровня", group = gS)
+showTbl = input.bool(true, "Чек-лист", group = gS)
+
+gC = "Цвета"
+cPoc  = input.color(#ff9800, "POC", group = gC)
+cVah  = input.color(#787b86, "VAH", inline = "va", group = gC)
+cVal  = input.color(#787b86, "VAL", inline = "va", group = gC)
+cEma  = input.color(#2962ff, "EMA", group = gC)
+cLong = input.color(#089981, "Лонг",  inline = "s", group = gC)
+cShrt = input.color(#f23645, "Шорт",  inline = "s", group = gC)
+
+// ─────────────────────────────── Профиль: расчёт
+// Объём бара раскладывается по строкам, которые он перекрывает, поровну.
+// Это приближение: внутри бара распределение неизвестно.
+f_profile(int len, int rowsN, float vaPct) =>
+    float hi  = ta.highest(high, len)
+    float lo  = ta.lowest(low, len)
+    float rng = hi - lo
+    float rPoc = na
+    float rVah = na
+    float rVal = na
+    if rng > 0
+        float step = rng / rowsN
+        array<float> bins = array.new<float>(rowsN, 0.0)
+        for i = 0 to len - 1
+            float v = nz(volume[i])
+            if v > 0
+                int r1 = int(math.floor((low[i]  - lo) / step))
+                int r2 = int(math.floor((high[i] - lo) / step))
+                r1 := math.max(0, math.min(rowsN - 1, r1))
+                r2 := math.max(0, math.min(rowsN - 1, r2))
+                float share = v / (r2 - r1 + 1)
+                for r = r1 to r2
+                    array.set(bins, r, array.get(bins, r) + share)
+        float total = array.sum(bins)
+        if total > 0
+            int pocIdx = array.indexof(bins, array.max(bins))
+            float target = total * vaPct / 100.0
+            float acc = array.get(bins, pocIdx)
+            int up = pocIdx
+            int dn = pocIdx
+            while acc < target and (up < rowsN - 1 or dn > 0)
+                float vUp = up < rowsN - 1 ? array.get(bins, up + 1) : -1.0
+                float vDn = dn > 0 ? array.get(bins, dn - 1) : -1.0
+                if vUp >= vDn
+                    up  := up + 1
+                    acc := acc + vUp
+                else
+                    dn  := dn - 1
+                    acc := acc + vDn
+            rPoc := lo + (pocIdx + 0.5) * step
+            rVah := lo + (up + 1) * step
+            rVal := lo + dn * step
+    [rPoc, rVah, rVal]
+
+bool doCalc = bar_index >= vpLen and bar_index >= last_bar_index - vpLast
+
+var float poc = na
+var float vah = na
+var float val = na
+
+if doCalc
+    [p0, h0, l0] = f_profile(vpLen, vpRows, vpVA)
+    poc := p0
+    vah := h0
+    val := l0
+
+float ema = ta.ema(emaSrc, emaLen)
+
+plot(showLvl ? poc : na, "POC", color = cPoc, style = plot.style_linebr, linewidth = 2)
+plot(showLvl ? vah : na, "VAH", color = cVah, style = plot.style_linebr, linewidth = 1)
+plot(showLvl ? val : na, "VAL", color = cVal, style = plot.style_linebr, linewidth = 1)
+plot(showEma ? ema : na, "EMA", color = cEma, linewidth = 1)
+
+// ─────────────────────────────── Дивергенции
+var array<int>   phB = array.new<int>()
+var array<float> phP = array.new<float>()
+var array<float> phC = array.new<float>()
+var array<int>   plB = array.new<int>()
+var array<float> plP = array.new<float>()
+var array<float> plC = array.new<float>()
+
+var array<line>  lns = array.new<line>()
+var array<label> lbs = array.new<label>()
+
+float ph = ta.pivothigh(high, piv, pivR)
+float pl = ta.pivotlow(low,  piv, pivR)
+
+bool divBear = false
+bool divBull = false
+
+if not na(ph) and not na(src[pivR])
+    int   bNow = bar_index - pivR
+    float pNow = ph
+    float cNow = src[pivR]
+    if array.size(phB) > 0
+        for i = 0 to array.size(phB) - 1
+            int   b0 = array.get(phB, i)
+            float p0 = array.get(phP, i)
+            float c0 = array.get(phC, i)
+            int   gp = bNow - b0
+            if gp >= minGap and gp <= maxGap
+                bool reg = useReg and pNow > p0 and cNow < c0
+                bool hid = useHid and pNow < p0 and cNow > c0
+                if reg or hid
+                    divBear := true
+                    if showDiv
+                        array.push(lns, line.new(b0, p0, bNow, pNow, xloc = xloc.bar_index, color = cShrt, width = 1))
+    array.push(phB, bNow)
+    array.push(phP, pNow)
+    array.push(phC, cNow)
+    while array.size(phB) > maxPiv
+        array.shift(phB)
+        array.shift(phP)
+        array.shift(phC)
+
+if not na(pl) and not na(src[pivR])
+    int   bNow = bar_index - pivR
+    float pNow = pl
+    float cNow = src[pivR]
+    if array.size(plB) > 0
+        for i = 0 to array.size(plB) - 1
+            int   b0 = array.get(plB, i)
+            float p0 = array.get(plP, i)
+            float c0 = array.get(plC, i)
+            int   gp = bNow - b0
+            if gp >= minGap and gp <= maxGap
+                bool reg = useReg and pNow < p0 and cNow > c0
+                bool hid = useHid and pNow > p0 and cNow < c0
+                if reg or hid
+                    divBull := true
+                    if showDiv
+                        array.push(lns, line.new(b0, p0, bNow, pNow, xloc = xloc.bar_index, color = cLong, width = 1))
+    array.push(plB, bNow)
+    array.push(plP, pNow)
+    array.push(plC, cNow)
+    while array.size(plB) > maxPiv
+        array.shift(plB)
+        array.shift(plP)
+        array.shift(plC)
+
+while array.size(lns) > 60
+    line.delete(array.shift(lns))
+
+// ─────────────────────────────── События по уровням
+float tol = syminfo.mintick * tolTick
+
+f_up(float lvl, bool on) =>
+    on and not na(lvl) and useBrk and ta.crossover(close, lvl)
+
+f_dn(float lvl, bool on) =>
+    on and not na(lvl) and useBrk and ta.crossunder(close, lvl)
+
+// Отскок вверх: бар достал уровень снизу или коснулся его, но закрылся выше
+f_bncUp(float lvl, bool on) =>
+    on and not na(lvl) and useBnc and low <= lvl + tol and close > lvl and close > open
+
+f_bncDn(float lvl, bool on) =>
+    on and not na(lvl) and useBnc and high >= lvl - tol and close < lvl and close < open
+
+string upLvl = f_up(vah, useVAH) ? "пробой VAH" : f_up(poc, usePOC) ? "пробой POC" : f_up(val, useVAL) ? "пробой VAL" : f_bncUp(val, useVAL) ? "отскок VAL" : f_bncUp(poc, usePOC) ? "отскок POC" : f_bncUp(vah, useVAH) ? "отскок VAH" : ""
+string dnLvl = f_dn(val, useVAL) ? "пробой VAL" : f_dn(poc, usePOC) ? "пробой POC" : f_dn(vah, useVAH) ? "пробой VAH" : f_bncDn(vah, useVAH) ? "отскок VAH" : f_bncDn(poc, usePOC) ? "отскок POC" : f_bncDn(val, useVAL) ? "отскок VAL" : ""
+
+bool lvlUp = upLvl != ""
+bool lvlDn = dnLvl != ""
+
+var string lastUp = ""
+var string lastDn = ""
+if lvlUp
+    lastUp := upLvl
+if lvlDn
+    lastDn := dnLvl
+
+// ─────────────────────────────── События по EMA
+bool emaUp = close > ema and (ta.crossover(close, ema) or low <= ema + tol)
+bool emaDn = close < ema and (ta.crossunder(close, ema) or high >= ema - tol)
+
+// ─────────────────────────────── Совмещение
+f_recent(bool cond) =>
+    nz(ta.barssince(cond), 99999) <= winBars
+
+bool okLvlUp = f_recent(lvlUp)
+bool okLvlDn = f_recent(lvlDn)
+bool okEmaUp = f_recent(emaUp)
+bool okEmaDn = f_recent(emaDn)
+bool okDivUp = f_recent(divBull)
+bool okDivDn = f_recent(divBear)
+
+bool longReady  = okLvlUp and okEmaUp and okDivUp and close > ema
+bool shortReady = okLvlDn and okEmaDn and okDivDn and close < ema
+
+bool longFire  = longReady  and not longReady[1]
+bool shortFire = shortReady and not shortReady[1]
+
+if longFire
+    label.new(bar_index, low, "ЛОНГ\n" + lastUp, xloc = xloc.bar_index, yloc = yloc.belowbar, style = label.style_label_up, color = color.new(cLong, 10), textcolor = color.white, size = size.small)
+if shortFire
+    label.new(bar_index, high, "ШОРТ\n" + lastDn, xloc = xloc.bar_index, yloc = yloc.abovebar, style = label.style_label_down, color = color.new(cShrt, 10), textcolor = color.white, size = size.small)
+
+// ─────────────────────────────── Чек-лист
+var table tb = table.new(position.top_right, 3, 6, frame_color = color.new(color.gray, 50), frame_width = 1, border_color = color.new(color.gray, 75), border_width = 1)
+
+f_mark(bool v) =>
+    v ? "✔" : "·"
+
+if showTbl and barstate.islast
+    color bg = color.new(color.gray, 88)
+    table.cell(tb, 0, 0, "условие", text_color = color.gray, text_size = size.tiny, bgcolor = bg)
+    table.cell(tb, 1, 0, "лонг",    text_color = cLong,      text_size = size.tiny, bgcolor = bg)
+    table.cell(tb, 2, 0, "шорт",    text_color = cShrt,      text_size = size.tiny, bgcolor = bg)
+
+    table.cell(tb, 0, 1, "уровень", text_color = color.gray, text_size = size.tiny)
+    table.cell(tb, 1, 1, f_mark(okLvlUp), text_color = okLvlUp ? cLong : color.gray, text_size = size.tiny)
+    table.cell(tb, 2, 1, f_mark(okLvlDn), text_color = okLvlDn ? cShrt : color.gray, text_size = size.tiny)
+
+    table.cell(tb, 0, 2, "EMA " + str.tostring(emaLen), text_color = color.gray, text_size = size.tiny)
+    table.cell(tb, 1, 2, f_mark(okEmaUp), text_color = okEmaUp ? cLong : color.gray, text_size = size.tiny)
+    table.cell(tb, 2, 2, f_mark(okEmaDn), text_color = okEmaDn ? cShrt : color.gray, text_size = size.tiny)
+
+    table.cell(tb, 0, 3, "дивергенция", text_color = color.gray, text_size = size.tiny)
+    table.cell(tb, 1, 3, f_mark(okDivUp), text_color = okDivUp ? cLong : color.gray, text_size = size.tiny)
+    table.cell(tb, 2, 3, f_mark(okDivDn), text_color = okDivDn ? cShrt : color.gray, text_size = size.tiny)
+
+    table.cell(tb, 0, 4, "итог", text_color = color.gray, text_size = size.tiny, bgcolor = bg)
+    table.cell(tb, 1, 4, longReady  ? "СЕТАП" : "нет", text_color = longReady  ? color.white : color.gray, text_size = size.tiny, bgcolor = longReady  ? color.new(cLong, 40) : bg)
+    table.cell(tb, 2, 4, shortReady ? "СЕТАП" : "нет", text_color = shortReady ? color.white : color.gray, text_size = size.tiny, bgcolor = shortReady ? color.new(cShrt, 40) : bg)
+
+    bool noSrc = na(src) or (src == close and src[1] == close[1] and src[2] == close[2])
+    table.cell(tb, 0, 5, noSrc ? "CVD НЕ ПОДКЛЮЧЁН" : "профиль " + str.tostring(vpLen) + " баров", text_color = noSrc ? cShrt : color.gray, text_size = size.tiny)
+    table.cell(tb, 1, 5, "", text_color = color.gray, text_size = size.tiny)
+    table.cell(tb, 2, 5, "", text_color = color.gray, text_size = size.tiny)
+
+// ─────────────────────────────── Алерты
+alertcondition(longFire,  "Сетап лонг",  "Уровень профиля + EMA + бычья дивергенция")
+alertcondition(shortFire, "Сетап шорт",  "Уровень профиля + EMA + медвежья дивергенция")
