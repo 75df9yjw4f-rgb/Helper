@@ -14,6 +14,7 @@
 | [research/OI-DELTA.md](research/OI-DELTA.md) | Открытый интерес и дельта: матрица позиционирования, поглощение против истощения, где OI вообще есть |
 | [research/GEX-CRITIQUE.md](research/GEX-CRITIQUE.md) | Почему GEX сам по себе не работает: разбор заявления о пятилетнем тесте, что такое charm |
 | [research/GEX-GOLD.md](research/GEX-GOLD.md) | Gamma exposure по золоту: бесплатный источник, определение стен, пересчёт GLD в XAUUSD |
+| [tools/cvd_divergence.pine](tools/cvd_divergence.pine) | Индикатор TradingView: кумулятивная дельта и линии дивергенций на цене и на дельте |
 | [tools/oi_delta_positioning.pine](tools/oi_delta_positioning.pine) | Индикатор TradingView: матрица открытого интереса и дельты в одной панели |
 | [tools/volume_profile_levels.pine](tools/volume_profile_levels.pine) | Индикатор TradingView: POC, VAH, VAL за дневные композиты и календарные периоды |
 | [tools/vwap_levels.pine](tools/vwap_levels.pine) | Индикатор TradingView: VWAP уровнями со значениями вместо непрерывной линии |
