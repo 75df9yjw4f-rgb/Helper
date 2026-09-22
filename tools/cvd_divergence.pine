@@ -22,6 +22,10 @@
 //
 // Пивот подтверждается через R баров после экстремума. Раньше неизвестно,
 // экстремум ли это, поэтому линия и появляется с задержкой.
+//
+// Дополнительно: пара настраиваемых EMA с отметкой пересечений. Пересечение
+// помечается ярко, если оно случилось вскоре после дивергенции той же стороны,
+// и приглушённо, если само по себе.
 indicator("CVD Divergence", "CVD div", overlay = true, max_lines_count = 500, max_labels_count = 500)
 
 // ─────────────────────────────── Источник
@@ -46,6 +50,18 @@ keepN    = input.int(20, "Сколько последних дивергенци
 showInfo = input.bool(true, "Строка состояния", group = gV)
 cBear    = input.color(#f23645, "Медвежья", inline = "c", group = gV)
 cBull    = input.color(#089981, "Бычья",    inline = "c", group = gV)
+
+// ─────────────────────────────── EMA
+gE = "EMA"
+useEma   = input.bool(true, "Показывать EMA", group = gE)
+emaSrc   = input.source(close, "Цена для EMA", group = gE)
+len1     = input.int(9,  "Быстрая", minval = 1, inline = "l", group = gE)
+len2     = input.int(21, "Медленная", minval = 1, inline = "l", group = gE)
+showX    = input.bool(true, "Отмечать пересечения", group = gE)
+onlyConf = input.bool(false, "Только пересечения, совпавшие с дивергенцией", group = gE)
+confBars = input.int(20, "Окно совпадения с дивергенцией, баров", minval = 1, group = gE)
+cE1      = input.color(#2962ff, "Быстрая", inline = "ce", group = gE)
+cE2      = input.color(#ff9800, "Медленная", inline = "ce", group = gE)
 
 // ─────────────────────────────── Память по экстремумам
 var int   hB1 = 0
@@ -126,6 +142,36 @@ if not na(pl) and not na(src[pivR])
             if showLbl
                 array.push(lbs, label.new(lB2, lP2, txtL, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_up, color = color.new(cBull, 15), textcolor = color.white, size = size.tiny, force_overlay = true))
 
+// ─────────────────────────────── EMA и пересечения
+// Считается после поиска дивергенций, чтобы можно было проверить совпадение.
+float e1 = ta.ema(emaSrc, len1)
+float e2 = ta.ema(emaSrc, len2)
+
+bool xUp = ta.crossover(e1, e2)
+bool xDn = ta.crossunder(e1, e2)
+
+var int lastBear = -1
+var int lastBull = -1
+if bear
+    lastBear := bar_index
+if bull
+    lastBull := bar_index
+
+// Пересечение считается подтверждённым, если дивергенция той же стороны была
+// не раньше чем confBars баров назад. Дивергенция подтверждается с задержкой
+// в pivR баров, поэтому окно должно быть заметно больше пивота.
+bool confUp = xUp and lastBull >= 0 and bar_index - lastBull <= confBars
+bool confDn = xDn and lastBear >= 0 and bar_index - lastBear <= confBars
+
+bool drawUp = showX and (onlyConf ? confUp : xUp)
+bool drawDn = showX and (onlyConf ? confDn : xDn)
+
+plot(useEma ? e1 : na, "EMA быстрая",   color = cE1, linewidth = 1)
+plot(useEma ? e2 : na, "EMA медленная", color = cE2, linewidth = 1)
+
+plotshape(drawUp, "Пересечение вверх", style = shape.triangleup,   location = location.belowbar, color = confUp ? cBull : color.new(cBull, 45), size = size.tiny)
+plotshape(drawDn, "Пересечение вниз",  style = shape.triangledown, location = location.abovebar, color = confDn ? cBear : color.new(cBear, 45), size = size.tiny)
+
 // Старые отрисовки удаляются, иначе упрёмся в лимит объектов
 int perDiv = (onCvd ? 1 : 0) + (onPrice ? 1 : 0)
 int maxObj = math.max(keepN * math.max(perDiv, 1), 2)
@@ -139,7 +185,7 @@ while array.size(lbs) > maxObj
 plot(src, "Источник", color = color.new(color.gray, 100), display = display.none, editable = false)
 
 // ─────────────────────────────── Строка состояния
-var table inf = table.new(position.bottom_right, 1, 2, frame_color = color.new(color.gray, 60), frame_width = 1, border_color = color.new(color.gray, 80), border_width = 1)
+var table inf = table.new(position.bottom_right, 1, 3, frame_color = color.new(color.gray, 60), frame_width = 1, border_color = color.new(color.gray, 80), border_width = 1)
 
 if showInfo and barstate.islast
     bool noSrc  = na(src)
@@ -147,7 +193,13 @@ if showInfo and barstate.islast
     string s = noSrc ? "ИСТОЧНИК ПУСТ: в CDV поставьте Style = Line" : isPrice ? "ИСТОЧНИК = close: выберите плот CDV" : "источник подключён"
     table.cell(inf, 0, 0, s, text_color = (noSrc or isPrice) ? cBear : color.gray, text_size = size.tiny)
     table.cell(inf, 0, 1, "дивергенций: " + str.tostring(cntBear) + " медв. / " + str.tostring(cntBull) + " быч.", text_color = color.gray, text_size = size.tiny)
+    string emaTxt = not useEma ? "EMA выключены" : "EMA " + str.tostring(len1) + "/" + str.tostring(len2) + ": " + (e1 > e2 ? "быстрая выше" : "быстрая ниже")
+    table.cell(inf, 0, 2, emaTxt, text_color = useEma ? (e1 > e2 ? cBull : cBear) : color.gray, text_size = size.tiny)
 
 // ─────────────────────────────── Алерты
 alertcondition(bear, "Медвежья CVD-дивергенция", "Цена обновила максимум, CVD — нет")
 alertcondition(bull, "Бычья CVD-дивергенция",    "Цена обновила минимум, CVD — нет")
+alertcondition(xUp,     "Пересечение EMA вверх",  "Быстрая EMA пересекла медленную снизу вверх")
+alertcondition(xDn,     "Пересечение EMA вниз",   "Быстрая EMA пересекла медленную сверху вниз")
+alertcondition(confUp,  "EMA вверх после бычьей дивергенции",   "Пересечение EMA вверх вскоре после бычьей CVD-дивергенции")
+alertcondition(confDn,  "EMA вниз после медвежьей дивергенции", "Пересечение EMA вниз вскоре после медвежьей CVD-дивергенции")
