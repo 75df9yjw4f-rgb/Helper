@@ -14,7 +14,8 @@
 //
 // Сравнивается не только соседний экстремум, а последние maxPiv штук, иначе
 // расхождение между двумя минимумами, разделёнными промежуточными минимумами,
-// вообще не попадает в перебор.
+// вообще не попадает в перебор. Найденное совпадение не прекращает перебор:
+// один экстремум может дать несколько дивергенций, и все они рисуются.
 //
 // Установка (ничего перетаскивать не надо):
 //   1. В индикаторе CDV поставьте Style = Line. В режиме Candle плот "CDV Line"
@@ -41,15 +42,16 @@ src = input.source(close, "Источник: плот CVD с графика", to
 
 // ─────────────────────────────── Дивергенции
 gP = "Дивергенции"
-piv     = input.int(5,   "Пивот: баров слева", minval = 1, group = gP)
-pivR    = input.int(5,   "Пивот: баров справа (задержка подтверждения)", minval = 1, group = gP)
-minGap  = input.int(5,   "Мин. расстояние между экстремумами, баров", minval = 1, group = gP)
-maxGap  = input.int(150, "Макс. расстояние между экстремумами, баров", minval = 2, group = gP)
-maxPiv  = input.int(5,   "Сколько прошлых экстремумов сравнивать", minval = 1, maxval = 20, group = gP, tooltip = "1 = только соседний экстремум. Больше = ловит дивергенции через промежуточные пики.")
-useBear = input.bool(true, "Обычные медвежьи: на максимумах цена выше, CVD ниже", group = gP)
-useBull = input.bool(true, "Обычные бычьи: на минимумах цена ниже, CVD выше", group = gP)
-useHidB = input.bool(true, "Скрытые медвежьи: на максимумах цена ниже, CVD выше", group = gP)
-useHidL = input.bool(true, "Скрытые бычьи: на минимумах цена выше, CVD ниже", group = gP)
+piv      = input.int(5,   "Пивот: баров слева", minval = 1, group = gP)
+pivR     = input.int(5,   "Пивот: баров справа (задержка подтверждения)", minval = 1, group = gP)
+minGap   = input.int(5,   "Мин. расстояние между экстремумами, баров", minval = 1, group = gP)
+maxGap   = input.int(150, "Макс. расстояние между экстремумами, баров", minval = 2, group = gP)
+maxPiv   = input.int(5,   "Сколько прошлых экстремумов сравнивать", minval = 1, maxval = 20, group = gP, tooltip = "1 = только соседний экстремум. Больше = ловит дивергенции через промежуточные пики.")
+allPairs = input.bool(true, "Искать все совпадения, а не первое", group = gP, tooltip = "Выключить, если график перегружен: тогда на каждый экстремум рисуется только одна линия.")
+useBear  = input.bool(true, "Обычные медвежьи: на максимумах цена выше, CVD ниже", group = gP)
+useBull  = input.bool(true, "Обычные бычьи: на минимумах цена ниже, CVD выше", group = gP)
+useHidB  = input.bool(true, "Скрытые медвежьи: на максимумах цена ниже, CVD выше", group = gP)
+useHidL  = input.bool(true, "Скрытые бычьи: на минимумах цена выше, CVD ниже", group = gP)
 
 // ─────────────────────────────── Отображение
 gV = "Отображение"
@@ -57,7 +59,7 @@ onCvd    = input.bool(false, "Линия на панели дельты (тол�
 onPrice  = input.bool(true, "Линия на графике цены",  group = gV)
 showLbl  = input.bool(true, "Подписи", group = gV)
 lw       = input.int(2, "Толщина линии", minval = 1, maxval = 4, group = gV)
-keepN    = input.int(20, "Сколько последних дивергенций держать", minval = 1, group = gV)
+keepN    = input.int(60, "Сколько последних линий держать", minval = 1, group = gV)
 showInfo = input.bool(true, "Строка состояния", group = gV)
 cBear    = input.color(#f23645, "Медвежья", inline = "c", group = gV)
 cBull    = input.color(#089981, "Бычья",    inline = "c", group = gV)
@@ -118,8 +120,9 @@ bool bullHid = false
 var int cntBear = 0
 var int cntBull = 0
 
-// Максимумы. Перебор идёт от самого старого экстремума к новым, поэтому при
-// нескольких подходящих парах выбирается та, что охватывает больший участок.
+// Максимумы. Перебор идёт от самого старого экстремума к новым и по умолчанию
+// не останавливается на первом совпадении: один экстремум может образовать
+// дивергенцию сразу с несколькими предыдущими, и одна не должна скрывать другие.
 if not na(ph) and not na(src[pivR])
     int   bNow = bar_index - pivR
     float pNow = ph
@@ -134,12 +137,13 @@ if not na(ph) and not na(src[pivR])
                 bool reg = useBear and pNow > p0 and cNow < c0
                 bool hid = useHidB and pNow < p0 and cNow > c0
                 if reg or hid
-                    bearReg := reg
-                    bearHid := hid
+                    bearReg := bearReg or reg
+                    bearHid := bearHid or hid
                     cntBear := cntBear + 1
                     string t = (reg ? "CVD div " : "CVD скр. ") + f_n(c0) + " -> " + f_n(cNow)
                     int drawn = f_mark(b0, p0, c0, bNow, pNow, cNow, cBear, t, true)
-                    break
+                    if not allPairs
+                        break
     array.push(phB, bNow)
     array.push(phP, pNow)
     array.push(phC, cNow)
@@ -163,12 +167,13 @@ if not na(pl) and not na(src[pivR])
                 bool reg = useBull and pNow < p0 and cNow > c0
                 bool hid = useHidL and pNow > p0 and cNow < c0
                 if reg or hid
-                    bullReg := reg
-                    bullHid := hid
+                    bullReg := bullReg or reg
+                    bullHid := bullHid or hid
                     cntBull := cntBull + 1
                     string t = (reg ? "CVD div " : "CVD скр. ") + f_n(c0) + " -> " + f_n(cNow)
                     int drawn = f_mark(b0, p0, c0, bNow, pNow, cNow, cBull, t, false)
-                    break
+                    if not allPairs
+                        break
     array.push(plB, bNow)
     array.push(plP, pNow)
     array.push(plC, cNow)
@@ -211,8 +216,7 @@ plotshape(drawUp, "Пересечение вверх", style = shape.triangleup,
 plotshape(drawDn, "Пересечение вниз",  style = shape.triangledown, location = location.abovebar, color = confDn ? cBear : color.new(cBear, 45), size = size.tiny)
 
 // Старые отрисовки удаляются, иначе упрёмся в лимит объектов
-int perDiv = (onCvd ? 1 : 0) + (onPrice ? 1 : 0)
-int maxObj = math.max(keepN * math.max(perDiv, 1), 2)
+int maxObj = math.max(keepN, 2)
 while array.size(lns) > maxObj
     line.delete(array.shift(lns))
 while array.size(lbs) > maxObj
