@@ -5,20 +5,24 @@
 //
 // Логика. Экстремумы ищутся по ЦЕНЕ. На тех же самых барах читается значение
 // CVD. Цена выше, CVD ниже — медвежья дивергенция. Цена ниже, CVD выше — бычья.
-// Проводятся две линии между одними и теми же двумя барами: на панели дельты
-// и на ценовом графике (через force_overlay).
+// Линия проводится по цене между двумя экстремумами, а значения CVD в этих же
+// точках выводятся в подписи: видно, что цена пошла вверх, а дельта вниз.
 //
-// Установка:
+// Установка (ничего перетаскивать не надо):
 //   1. В индикаторе CDV поставьте Style = Line. В режиме Candle плот "CDV Line"
 //      пустой (в коде ctl присваивается только в ветке Line), и брать оттуда
 //      нечего.
-//   2. Добавьте этот индикатор, перетащите его в панель к CDV (Move to ->
-//      существующая панель), чтобы линии легли на саму дельту.
+//   2. Добавьте этот индикатор. Он ляжет прямо на ценовой график.
 //   3. В настройках выберите Источник = "CDV: CDV Line".
+//
+// Если хочется линию ещё и на панели дельты: в строке indicator() ниже
+// поменяйте overlay = true на overlay = false, перенесите скрипт в панель CDV
+// и включите в настройках "Линия на панели дельты". Линии на цене при этом
+// останутся, они рисуются через force_overlay.
 //
 // Пивот подтверждается через R баров после экстремума. Раньше неизвестно,
 // экстремум ли это, поэтому линия и появляется с задержкой.
-indicator("CVD Divergence", "CVD div", overlay = false, max_lines_count = 500, max_labels_count = 500)
+indicator("CVD Divergence", "CVD div", overlay = true, max_lines_count = 500, max_labels_count = 500)
 
 // ─────────────────────────────── Источник
 src = input.source(close, "Источник: плот CVD с графика", tooltip = "Выберите плот индикатора кумулятивной дельты, например CDV: CDV Line")
@@ -34,7 +38,7 @@ useBull = input.bool(true, "Бычьи: цена ниже, CVD выше", group 
 
 // ─────────────────────────────── Отображение
 gV = "Отображение"
-onCvd    = input.bool(true, "Линия на панели дельты", group = gV)
+onCvd    = input.bool(false, "Линия на панели дельты (только если overlay = false)", group = gV)
 onPrice  = input.bool(true, "Линия на графике цены",  group = gV)
 showLbl  = input.bool(true, "Подписи", group = gV)
 lw       = input.int(2, "Толщина линии", minval = 1, maxval = 4, group = gV)
@@ -63,6 +67,11 @@ var int   lN  = 0
 var array<line>  lns = array.new<line>()
 var array<label> lbs = array.new<label>()
 
+// Компактная запись больших чисел для подписей
+f_n(float v) =>
+    float a = math.abs(v)
+    a >= 1e9 ? str.tostring(v / 1e9, "#.##") + "B" : a >= 1e6 ? str.tostring(v / 1e6, "#.##") + "M" : a >= 1e3 ? str.tostring(v / 1e3, "#.#") + "K" : str.tostring(v, "#.#")
+
 // ─────────────────────────────── Поиск
 float ph = ta.pivothigh(high, piv, pivR)
 float pl = ta.pivotlow(low,  piv, pivR)
@@ -85,14 +94,15 @@ if not na(ph) and not na(src[pivR])
     if useBear and hN >= 2 and gapH >= minGap and gapH <= maxGap and hP2 > hP1 and hC2 < hC1
         bear := true
         cntBear := cntBear + 1
+        string txtH = "CVD " + f_n(hC1) + " -> " + f_n(hC2)
         if onCvd
             array.push(lns, line.new(hB1, hC1, hB2, hC2, xloc = xloc.bar_index, color = cBear, width = lw))
             if showLbl
-                array.push(lbs, label.new(hB2, hC2, "CVD div", xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_down, color = color.new(cBear, 15), textcolor = color.white, size = size.tiny))
+                array.push(lbs, label.new(hB2, hC2, txtH, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_down, color = color.new(cBear, 15), textcolor = color.white, size = size.tiny))
         if onPrice
             array.push(lns, line.new(hB1, hP1, hB2, hP2, xloc = xloc.bar_index, color = cBear, width = lw, force_overlay = true))
             if showLbl
-                array.push(lbs, label.new(hB2, hP2, "CVD div", xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_down, color = color.new(cBear, 15), textcolor = color.white, size = size.tiny, force_overlay = true))
+                array.push(lbs, label.new(hB2, hP2, txtH, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_down, color = color.new(cBear, 15), textcolor = color.white, size = size.tiny, force_overlay = true))
 
 if not na(pl) and not na(src[pivR])
     lB1 := lB2
@@ -106,14 +116,15 @@ if not na(pl) and not na(src[pivR])
     if useBull and lN >= 2 and gapL >= minGap and gapL <= maxGap and lP2 < lP1 and lC2 > lC1
         bull := true
         cntBull := cntBull + 1
+        string txtL = "CVD " + f_n(lC1) + " -> " + f_n(lC2)
         if onCvd
             array.push(lns, line.new(lB1, lC1, lB2, lC2, xloc = xloc.bar_index, color = cBull, width = lw))
             if showLbl
-                array.push(lbs, label.new(lB2, lC2, "CVD div", xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_up, color = color.new(cBull, 15), textcolor = color.white, size = size.tiny))
+                array.push(lbs, label.new(lB2, lC2, txtL, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_up, color = color.new(cBull, 15), textcolor = color.white, size = size.tiny))
         if onPrice
             array.push(lns, line.new(lB1, lP1, lB2, lP2, xloc = xloc.bar_index, color = cBull, width = lw, force_overlay = true))
             if showLbl
-                array.push(lbs, label.new(lB2, lP2, "CVD div", xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_up, color = color.new(cBull, 15), textcolor = color.white, size = size.tiny, force_overlay = true))
+                array.push(lbs, label.new(lB2, lP2, txtL, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_up, color = color.new(cBull, 15), textcolor = color.white, size = size.tiny, force_overlay = true))
 
 // Старые отрисовки удаляются, иначе упрёмся в лимит объектов
 int perDiv = (onCvd ? 1 : 0) + (onPrice ? 1 : 0)
@@ -123,7 +134,8 @@ while array.size(lns) > maxObj
 while array.size(lbs) > maxObj
     label.delete(array.shift(lbs))
 
-// Невидимый плот: чтобы панель имела масштаб дельты, даже если её не слили с CDV
+// Невидимый плот источника. На масштаб не влияет (display.none), нужен только
+// чтобы в режиме overlay = false панель скрипта имела масштаб дельты.
 plot(src, "Источник", color = color.new(color.gray, 100), display = display.none, editable = false)
 
 // ─────────────────────────────── Строка состояния
