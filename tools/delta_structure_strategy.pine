@@ -1,0 +1,296 @@
+//@version=6
+// Delta Structure — структура кумулятивной дельты против структуры цены.
+//
+// ЧТО ЧИТАЕТ. На каждом развороте цены сравниваются две структуры:
+//   цена   сделала более высокий максимум (HH) или более низкий (LH)
+//   дельта сделала более высокий максимум (HH) или более низкий (LH)
+// Если метки не совпали, это НЕСООТВЕТСТВИЕ и оно подсвечивается.
+// На максимумах любое несоответствие читается как медвежий уклон,
+// на минимумах как бычий. Обоснование: и обычная дивергенция (цена HH,
+// дельта LH), и скрытая (цена LH, дельта HH) по классике смотрят вниз,
+// первая как разворот, вторая как продолжение.
+//
+// СВЕЧНАЯ ДЕЛЬТА. Дельта считается внутри скрипта и строится СВЕЧАМИ:
+// по барам младшего таймфрейма накапливается внутрибарный ход, из него
+// берутся high и low свечи дельты. Линия даёт только закрытие, а структуру
+// по закрытиям читать нельзя: максимум дельты внутри бара может быть выше
+// её закрытия. Внешний индикатор здесь не годится — TradingView не отдаёт
+// plotcandle как input.source, поэтому расчёт свой.
+//
+// СИГНАЛЫ. Вход по ПЕРЕСЕЧЕНИЮ EMA в сторону активного уклона.
+// Несоответствие задаёт направление, пересечение EMA даёт момент.
+//
+// БЭКТЕСТ. Это strategy, результаты в Strategy Tester. Стоп и цель в тактике
+// не заданы, поэтому поставлены мои значения: стоп 1.5 ATR либо за свинг,
+// цель 2R, опционально выход по обратному пересечению EMA. Это допущение,
+// а не часть вашей тактики. Меняйте и смотрите, насколько результат от них зависит.
+strategy("Delta Structure Strategy", "ΔStruct", overlay = true, initial_capital = 10000, default_qty_type = strategy.percent_of_equity, default_qty_value = 10, commission_type = strategy.commission.percent, commission_value = 0.04, slippage = 2, max_lines_count = 500, max_labels_count = 500)
+
+// ─────────────────────────────── Дельта
+gD = "Дельта"
+ltf      = input.timeframe("1", "Младший ТФ для внутрибарной дельты", group = gD, tooltip = "Должен быть меньше таймфрейма графика. На 1m графике поставьте 1S, если доступно.")
+resetStr = input.string("Не сбрасывать", "Сброс накопления", options = ["Не сбрасывать", "Каждый день", "Каждую неделю"], group = gD)
+
+// ─────────────────────────────── Структура
+gS = "Структура"
+piv      = input.int(5, "Пивот: баров слева", minval = 1, group = gS)
+pivR     = input.int(5, "Пивот: баров справа (задержка подтверждения)", minval = 1, group = gS)
+showAll  = input.bool(false, "Показывать все метки структуры", group = gS, tooltip = "Выключено: подписываются только несоответствия.")
+biasBars = input.int(20, "Сколько баров держится уклон", minval = 1, group = gS)
+
+// ─────────────────────────────── EMA
+gE = "EMA"
+emaLen = input.int(21, "Период EMA", minval = 1, group = gE)
+emaSrc = input.source(close, "Цена для EMA", group = gE)
+
+// ─────────────────────────────── Профиль объёма (фильтр)
+gV = "Профиль объёма"
+useVP   = input.bool(true, "Требовать событие на уровне профиля", group = gV)
+vpLen   = input.int(200, "Окно профиля, баров", minval = 20, maxval = 1000, group = gV)
+vpRows  = input.int(24,  "Строк профиля", minval = 10, maxval = 100, group = gV)
+vpVA    = input.float(70, "Область стоимости, %", minval = 30, maxval = 95, step = 5, group = gV)
+vpLast  = input.int(3000, "Считать профиль только на последних N барах", minval = 200, group = gV)
+winBars = input.int(10, "Окно события уровня, баров", minval = 1, group = gV)
+tolTick = input.int(2, "Допуск касания уровня, тиков", minval = 0, group = gV)
+showLvl = input.bool(true, "Показывать уровни", group = gV)
+
+// ─────────────────────────────── Риск
+gR = "Риск"
+stopMode = input.string("ATR", "Стоп", options = ["ATR", "Свинг"], group = gR)
+atrLen   = input.int(14, "ATR период", minval = 1, group = gR)
+atrK     = input.float(1.5, "ATR множитель", minval = 0.1, step = 0.1, group = gR)
+swingLen = input.int(10, "Свинг, баров", minval = 2, group = gR)
+rr       = input.float(2.0, "Цель, R", minval = 0.1, step = 0.5, group = gR)
+exitX    = input.bool(true, "Выходить по обратному пересечению EMA", group = gR)
+allowL   = input.bool(true, "Лонги",  inline = "d", group = gR)
+allowS   = input.bool(true, "Шорты",  inline = "d", group = gR)
+
+gT = "Период теста"
+tFrom = input.time(timestamp("2024-01-01 00:00"), "С", group = gT)
+tTo   = input.time(timestamp("2030-01-01 00:00"), "По", group = gT)
+
+gC = "Цвета"
+cUp   = input.color(#089981, "Бычий",  inline = "c", group = gC)
+cDnC  = input.color(#f23645, "Медвежий", inline = "c", group = gC)
+cNeut = input.color(#787b86, "Нейтральный", group = gC)
+cPoc  = input.color(#ff9800, "POC", group = gC)
+
+// ─────────────────────────────── Свеча дельты
+// Внутри бара дельта накапливается по барам младшего ТФ. Максимум и минимум
+// этого накопления и есть high и low свечи дельты.
+[aC, aO, aV] = request.security_lower_tf(syminfo.tickerid, ltf, [close, open, volume])
+bool haveLtf = not na(aC) and array.size(aC) > 0
+
+float dSum = 0.0
+float relHi = 0.0
+float relLo = 0.0
+
+if haveLtf
+    float run = 0.0
+    for i = 0 to array.size(aC) - 1
+        float cc = array.get(aC, i)
+        float oo = array.get(aO, i)
+        float vv = nz(array.get(aV, i))
+        run := run + (cc > oo ? vv : cc < oo ? -vv : 0.0)
+        relHi := math.max(relHi, run)
+        relLo := math.min(relLo, run)
+    dSum := run
+else
+    // Запасной расчёт по телу свечи, если младший ТФ недоступен.
+    float tw = high - math.max(open, close)
+    float bw = math.min(open, close) - low
+    float bd = math.abs(close - open)
+    float den = tw + bw + bd
+    float rt = den > 0 ? 0.5 * (tw + bw + 2 * bd) / den : 0.5
+    dSum := (close >= open ? 1.0 : -1.0) * nz(volume) * rt
+    relHi := math.max(dSum, 0.0)
+    relLo := math.min(dSum, 0.0)
+
+bool newP = resetStr == "Каждый день" ? timeframe.change("D") : resetStr == "Каждую неделю" ? timeframe.change("W") : false
+
+var float dClose = 0.0
+float dPrev  = newP ? 0.0 : nz(dClose[1], 0.0)
+float dOpen  = dPrev
+float dHigh  = dPrev + math.max(relHi, dSum, 0.0)
+float dLow   = dPrev + math.min(relLo, dSum, 0.0)
+dClose := dPrev + dSum
+
+// ─────────────────────────────── Профиль объёма
+f_profile(int len, int rowsN, float vaPct) =>
+    float hi  = ta.highest(high, len)
+    float lo  = ta.lowest(low, len)
+    float rng = hi - lo
+    float rPoc = na
+    float rVah = na
+    float rVal = na
+    if rng > 0
+        float step = rng / rowsN
+        array<float> bins = array.new<float>(rowsN, 0.0)
+        for i = 0 to len - 1
+            float v = nz(volume[i])
+            if v > 0
+                int r1 = int(math.floor((low[i]  - lo) / step))
+                int r2 = int(math.floor((high[i] - lo) / step))
+                r1 := math.max(0, math.min(rowsN - 1, r1))
+                r2 := math.max(0, math.min(rowsN - 1, r2))
+                float share = v / (r2 - r1 + 1)
+                for r = r1 to r2
+                    array.set(bins, r, array.get(bins, r) + share)
+        float total = array.sum(bins)
+        if total > 0
+            int pocIdx = array.indexof(bins, array.max(bins))
+            float target = total * vaPct / 100.0
+            float acc = array.get(bins, pocIdx)
+            int up = pocIdx
+            int dn = pocIdx
+            while acc < target and (up < rowsN - 1 or dn > 0)
+                float vUp = up < rowsN - 1 ? array.get(bins, up + 1) : -1.0
+                float vDn = dn > 0 ? array.get(bins, dn - 1) : -1.0
+                if vUp >= vDn
+                    up  := up + 1
+                    acc := acc + vUp
+                else
+                    dn  := dn - 1
+                    acc := acc + vDn
+            rPoc := lo + (pocIdx + 0.5) * step
+            rVah := lo + (up + 1) * step
+            rVal := lo + dn * step
+    [rPoc, rVah, rVal]
+
+var float poc = na
+var float vah = na
+var float val = na
+
+if useVP and bar_index >= vpLen and bar_index >= last_bar_index - vpLast
+    [p0, h0, l0] = f_profile(vpLen, vpRows, vpVA)
+    poc := p0
+    vah := h0
+    val := l0
+
+float ema = ta.ema(emaSrc, emaLen)
+float tol = syminfo.mintick * tolTick
+
+plot(showLvl and useVP ? poc : na, "POC", color = cPoc,  style = plot.style_linebr, linewidth = 2)
+plot(showLvl and useVP ? vah : na, "VAH", color = cNeut, style = plot.style_linebr, linewidth = 1)
+plot(showLvl and useVP ? val : na, "VAL", color = cNeut, style = plot.style_linebr, linewidth = 1)
+plot(ema, "EMA", color = color.new(#2962ff, 0), linewidth = 1)
+
+// ─────────────────────────────── Структура цены и дельты
+float ph = ta.pivothigh(high, piv, pivR)
+float pl = ta.pivotlow(low,  piv, pivR)
+
+// Экстремум дельты берётся по окну вокруг того же пивота, а не в одной точке:
+// структура дельты это её собственные хай и лой, а не значение в момент хая цены.
+float dWinHi = ta.highest(dHigh, piv + pivR + 1)
+float dWinLo = ta.lowest(dLow,   piv + pivR + 1)
+
+var float pH1 = na
+var float dH1 = na
+var float pL1 = na
+var float dL1 = na
+
+bool misHigh = false
+bool misLow  = false
+
+if not na(ph)
+    if not na(pH1)
+        bool pHH = ph > pH1
+        bool dHH = dWinHi > dH1
+        bool mis = pHH != dHH
+        misHigh := mis
+        if mis or showAll
+            string t = (pHH ? "HH" : "LH") + " / Δ" + (dHH ? "HH" : "LH")
+            label.new(bar_index - pivR, ph, t, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_down, color = mis ? color.new(cDnC, 10) : color.new(cNeut, 60), textcolor = color.white, size = size.tiny)
+    pH1 := ph
+    dH1 := dWinHi
+
+if not na(pl)
+    if not na(pL1)
+        bool pLL = pl < pL1
+        bool dLL = dWinLo < dL1
+        bool mis = pLL != dLL
+        misLow := mis
+        if mis or showAll
+            string t = (pLL ? "LL" : "HL") + " / Δ" + (dLL ? "LL" : "HL")
+            label.new(bar_index - pivR, pl, t, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_up, color = mis ? color.new(cUp, 10) : color.new(cNeut, 60), textcolor = color.white, size = size.tiny)
+    pL1 := pl
+    dL1 := dWinLo
+
+// ─────────────────────────────── Уклон
+var int biasDir = 0
+var int biasBar = -1
+if misHigh
+    biasDir := -1
+    biasBar := bar_index
+if misLow
+    biasDir := 1
+    biasBar := bar_index
+bool biasOk = biasBar >= 0 and bar_index - biasBar <= biasBars
+
+// ─────────────────────────────── Событие на уровне
+f_ev(float lvl) =>
+    bool r = false
+    if not na(lvl)
+        r := ta.crossover(close, lvl) or ta.crossunder(close, lvl) or (low <= lvl + tol and high >= lvl - tol)
+    r
+
+bool lvlEv = not useVP or f_ev(poc) or f_ev(vah) or f_ev(val)
+bool lvlOk = not useVP or nz(ta.barssince(lvlEv), 99999) <= winBars
+
+// ─────────────────────────────── Сигналы
+bool xUp = ta.crossover(close, ema)
+bool xDn = ta.crossunder(close, ema)
+
+bool inTest = time >= tFrom and time <= tTo
+
+bool longSig  = allowL and xUp and biasOk and biasDir ==  1 and lvlOk and inTest
+bool shortSig = allowS and xDn and biasOk and biasDir == -1 and lvlOk and inTest
+
+plotshape(longSig,  "Сигнал лонг", style = shape.triangleup,   location = location.belowbar, color = cUp,  size = size.tiny)
+plotshape(shortSig, "Сигнал шорт", style = shape.triangledown, location = location.abovebar, color = cDnC, size = size.tiny)
+
+// ─────────────────────────────── Сделки
+float atr = ta.atr(atrLen)
+
+var float sl = na
+var float tp = na
+
+if longSig and strategy.position_size <= 0
+    strategy.entry("L", strategy.long)
+    sl := stopMode == "ATR" ? close - atr * atrK : ta.lowest(low, swingLen)
+    tp := close + (close - sl) * rr
+
+if shortSig and strategy.position_size >= 0
+    strategy.entry("S", strategy.short)
+    sl := stopMode == "ATR" ? close + atr * atrK : ta.highest(high, swingLen)
+    tp := close - (sl - close) * rr
+
+if strategy.position_size > 0
+    strategy.exit("L exit", "L", stop = sl, limit = tp)
+    if exitX and xDn
+        strategy.close("L", comment = "EMA")
+
+if strategy.position_size < 0
+    strategy.exit("S exit", "S", stop = sl, limit = tp)
+    if exitX and xUp
+        strategy.close("S", comment = "EMA")
+
+// ─────────────────────────────── Состояние
+var table tb = table.new(position.top_right, 2, 5, frame_color = color.new(color.gray, 50), frame_width = 1, border_color = color.new(color.gray, 75), border_width = 1)
+
+if barstate.islast
+    color bg = color.new(color.gray, 88)
+    table.cell(tb, 0, 0, "уклон", text_color = color.gray, text_size = size.tiny, bgcolor = bg)
+    table.cell(tb, 1, 0, not biasOk ? "нет" : biasDir == 1 ? "бычий" : "медвежий", text_color = not biasOk ? color.gray : biasDir == 1 ? cUp : cDnC, text_size = size.tiny, bgcolor = bg)
+    table.cell(tb, 0, 1, "баров с несоответствия", text_color = color.gray, text_size = size.tiny)
+    table.cell(tb, 1, 1, biasBar >= 0 ? str.tostring(bar_index - biasBar) : "—", text_color = color.gray, text_size = size.tiny)
+    table.cell(tb, 0, 2, "цена и EMA", text_color = color.gray, text_size = size.tiny)
+    table.cell(tb, 1, 2, close > ema ? "выше" : "ниже", text_color = close > ema ? cUp : cDnC, text_size = size.tiny)
+    table.cell(tb, 0, 3, "уровень", text_color = color.gray, text_size = size.tiny)
+    table.cell(tb, 1, 3, not useVP ? "выкл" : lvlOk ? "есть" : "нет", text_color = (not useVP or lvlOk) ? cUp : color.gray, text_size = size.tiny)
+    table.cell(tb, 0, 4, "дельта", text_color = color.gray, text_size = size.tiny)
+    table.cell(tb, 1, 4, haveLtf ? "свечи по " + ltf : "по телу свечи", text_color = haveLtf ? cUp : cDnC, text_size = size.tiny)
+
+// ─────────────────────────────── Алерты
+alertcondition(longSig,  "Сигнал лонг", "Несоответствие структуры на минимуме и пересечение EMA вверх")
+alertcondition(shortSig, "Сигнал шорт", "Несоответствие структуры на максимуме и пересечение EMA вниз")

@@ -15,6 +15,7 @@
 | [research/MY-STRATEGY.md](research/MY-STRATEGY.md) | Ваша тактика: профиль + EMA 21 + дивергенция дельты, что доопределено при формализации и чего не хватает |
 | [research/GEX-CRITIQUE.md](research/GEX-CRITIQUE.md) | Почему GEX сам по себе не работает: разбор заявления о пятилетнем тесте, что такое charm |
 | [research/GEX-GOLD.md](research/GEX-GOLD.md) | Gamma exposure по золоту: бесплатный источник, определение стен, пересчёт GLD в XAUUSD |
+| [tools/delta_structure_strategy.pine](tools/delta_structure_strategy.pine) | Стратегия TradingView: структура свечной дельты против структуры цены, вход по EMA, бэктест |
 | [tools/setup_scanner.pine](tools/setup_scanner.pine) | Индикатор TradingView: сканер сетапа — уровни скользящего профиля, EMA и дивергенция дельты вместе |
 | [tools/cvd_divergence.pine](tools/cvd_divergence.pine) | Индикатор TradingView: берёт готовый плот CVD и рисует дивергенции линиями на цене и на дельте |
 | [tools/oi_delta_positioning.pine](tools/oi_delta_positioning.pine) | Индикатор TradingView: матрица открытого интереса и дельты в одной панели |
